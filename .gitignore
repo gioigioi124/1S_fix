@@ -1,0 +1,14 @@
+node_modules/
+.env
+# Bỏ qua tất cả các file và thư mục
+*
+!*/
+
+# Giữ lại .gitignore để git theo dõi chính file này
+!.gitignore
+
+# Giữ lại 4 file bạn yêu cầu:
+!EXPORT_BANG_GIA_GUIDE.md
+!so_price_fix.FXP
+!/FRM/ctbhd.SCT
+!/frm/ctbhd.SCX
