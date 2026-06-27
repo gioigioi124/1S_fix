@@ -283,3 +283,41 @@ Chèn thêm lệnh tự động xóa sạch giá và chiết khấu cũ ngay khi
 * FIX: Xoa gia/chiet khau cu khi doi ma hang de tra cuu lai gia moi
 REPLACE Gia_Nt9 WITH 0, Chiet_Khau WITH 0, Tien_Nt4 WITH 0, Tien4 WITH 0 IN K_CtTemp
 ```
+
+---
+
+# Báo cáo: Sửa lỗi Giới hạn Nợ bị Cache (Stale Credit Limit Bug)
+
+## 1. Mô tả Lỗi
+Trên form `ctbhd.scx`, khi người dùng nhập mã khách hàng hoặc lưu chứng từ, hệ thống kiểm tra dư nợ thực tế so với Giới hạn nợ. Nếu người dùng mở một tab khác của phần mềm để nâng Giới hạn nợ lên, sau đó quay lại form xuất hàng (không đóng form) và nhấn Lưu, hệ thống vẫn báo lỗi "Quá giới hạn nợ!". Người dùng bắt buộc phải thoát form và vào lại thì giới hạn nợ mới được cập nhật.
+
+## 2. Phân tích Nguyên nhân
+Khi kiểm tra giới hạn nợ, hệ thống sử dụng 2 nguồn dữ liệu:
+- **Dư nợ thực tế**: Lấy trực tiếp từ SQL Server (thông qua hàm `GL_Alert_ClosingAccount4Customer`). Số liệu này luôn mới nhất.
+- **Giới hạn nợ (`Gioi_Han`, `Toi_Han`)**: Lấy từ cursor cục bộ `M_DmDt` (hoặc `M_DmNhDtKS` đối với nhóm khách hàng). Cursor này được tải vào RAM khi form vừa mở ra và **không bao giờ tự làm mới**.
+
+Hệ thống so sánh Dư nợ (Mới) với Giới hạn nợ (Cũ), dẫn đến việc chặn sai dù đã nâng hạn mức.
+
+## 3. Giải pháp Triệt để (Fix - 2026-06-27)
+Thay vì đọc `Gioi_Han` và `Toi_Han` từ cursor cục bộ bị cache, ta sử dụng ADO (thông qua đối tượng `oConnDataSource` có sẵn của form) để query trực tiếp SQL Server (`VTSYS.dbo.DmDt` và `VTSYS.dbo.DmNhDt`) ngay tại thời điểm nhấn nút Lưu hoặc khi nhập mã khách hàng.
+
+**Mã Patch (đã chèn vào `LostFocus` của `txtMa_Dt` và `Click` của nút Lưu):**
+```foxpro
+* FIX: Lay Gioi_Han tu SQL Server thay vi cursor cu
+LOCAL loRS_GH2, lcSQL_GH2
+lcSQL_GH2 = "SELECT Gioi_Han, Toi_Han FROM VTSYS.dbo.DmDt WHERE Ma_Dt = '" + ALLTRIM(tcMa_Dt) + "'"
+TRY
+    loRS_GH2 = oConnDataSource.Execute(lcSQL_GH2)
+    IF NOT loRS_GH2.EOF
+        _Gioi_Han = NVL(loRS_GH2.Fields("Gioi_Han").Value, 0)
+        _Toi_Han = NVL(loRS_GH2.Fields("Toi_Han").Value, 0)
+    ENDIF
+    loRS_GH2.Close()
+    loRS_GH2 = NULL
+CATCH
+    * Fallback: Neu loi (nhu rot mang), quay ve dung cursor cu de khong lam treo app
+    _Gioi_Han = M_DmDt.Gioi_Han
+    _Toi_Han = M_DmDt.Toi_Han
+ENDTRY
+```
+Giải pháp này an toàn vì không làm thay đổi hay tạo Stored Procedure rác trên SQL Server, và có cơ chế `TRY...CATCH` tự động lùi về phiên bản cũ (fallback) nếu query bị lỗi.
