@@ -1,4 +1,34 @@
-# Quá Trình Gỡ Lỗi: Tốc độ tìm kiếm danh mục khách hàng trên Form Báo Cáo (kct04.scx)
+# [HOÀN TẤT] Quá Trình Gỡ Lỗi: Tốc độ tìm kiếm danh mục khách hàng trên Form Báo Cáo (kct04.scx)
+
+## 0. Trạng thái hoàn tất
+
+- **Ngày hoàn tất**: 2026-06-27.
+- **File đã sửa**: `FRM\kct04.scx` và `FRM\kct04.SCT`.
+- **Kết quả**: Tốc độ tìm kiếm khách hàng trên form báo cáo công nợ đã nhanh hơn rõ rệt sau khi preload cursor local `M_DmDt` trong `frmKct04.Init`.
+- **Giải pháp cuối cùng**: Gọi đúng stored procedure `DmDt_Get` bằng `ADOCursorSys`, tạo cursor `M_DmDt` trong data session của chính form `kct04`, sau đó index local theo `Ma_Dt`.
+- **Fix đi kèm**: Xóa `Format = "!"` khỏi `txtMa_dt` để không ép chữ hoa làm sai hiển thị TCVN3.
+- **Tài liệu chi tiết**: Đã ghi vào `EXPORT_BANG_GIA_GUIDE.md`, mục "Tăng tốc tìm kiếm khách hàng trên Form Báo Cáo Công Nợ (`kct04.scx`)".
+
+Mã đã chèn vào `frmKct04.Init`:
+
+```foxpro
+PROCEDURE Init
+DODEFAULT()
+IF NOT USED([M_DmDt])
+   TRY
+      IF TYPE([THIS.oCursorDmDt]) = [U]
+         THIS.AddProperty([oCursorDmDt], .NULL.)
+      ENDIF
+      THIS.oCursorDmDt = CREATEOBJECT([ADOCursorSys], [M_DmDt], [EXECUTE DmDt_Get])
+      IF USED([M_DmDt])
+         SELECT M_DmDt
+         INDEX ON Ma_Dt TAG Ma_Dt
+      ENDIF
+   CATCH
+   ENDTRY
+ENDIF
+ENDPROC
+```
 
 ## 1. Mô tả Vấn đề
 - Khi nhập tên/mã khách hàng vào ô tìm kiếm (dropbox xổ xuống) tại form Điều kiện lọc của Báo cáo công nợ (`kct04.scx`), tốc độ phản hồi cực kỳ chậm, bị treo/giật ở từng phím gõ.

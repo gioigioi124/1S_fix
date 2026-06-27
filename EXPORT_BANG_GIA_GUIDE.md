@@ -321,3 +321,126 @@ CATCH
 ENDTRY
 ```
 Giải pháp này an toàn vì không làm thay đổi hay tạo Stored Procedure rác trên SQL Server, và có cơ chế `TRY...CATCH` tự động lùi về phiên bản cũ (fallback) nếu query bị lỗi.
+
+---
+
+# Báo cáo: Tăng tốc tìm kiếm khách hàng trên Form Báo Cáo Công Nợ (`kct04.scx`)
+
+## 1. Mô tả lỗi
+
+Trên form điều kiện lọc của báo cáo công nợ (`FRM\kct04.scx`), ô tìm khách hàng `txtMa_dt` phản hồi rất chậm khi gõ tên hoặc mã khách hàng. Tình trạng dễ thấy nhất khi nhập từng ký tự trong dropdown/autocomplete: giao diện bị giật hoặc treo ngắn theo từng phím.
+
+Trong khi đó, form chứng từ bán hàng (`ctbhd.scx`) tìm khách hàng rất nhanh với cùng danh mục `DmDt`.
+
+## 2. Nguyên nhân
+
+Khác biệt chính nằm ở cách form được cấp dữ liệu tra cứu:
+
+- `ctbhd.scx` thuộc nhóm form chứng từ. Khi form hoạt động, hệ thống đã có cursor cục bộ `M_DmDt` trong RAM. Các thao tác lookup/seek như `SEEKSQL(...)`, `LOOKUP(...)` hoặc `LookUpControl1.Assign_Value(...)` được xử lý chủ yếu trên cursor local.
+- `kct04.scx` là form điều kiện báo cáo. Form này không preload danh mục khách hàng, trong khi form báo cáo chạy trong private data session. Vì vậy lookup generic có xu hướng đi qua cơ chế truy vấn động/metadata và chậm hơn đáng kể.
+- Stored procedure đúng để lấy danh mục là `DmDt_Get`, không phải `DmDt_Get_List`. `DmDt_Get` có tồn tại và có thể trả toàn bộ danh mục khi gọi `EXECUTE DmDt_Get`.
+
+## 3. Các hướng đã thử
+
+### Hướng 1: Gọi `ADOCommandSys('DmDt_Get_List')` khi focus vào ô khách hàng
+
+Kết quả: thất bại.
+
+Lý do: không tồn tại stored procedure `DmDt_Get_List`, dẫn đến lỗi `Execution error from ADOCommandSys`.
+
+### Hướng 2: Mở khóa ô tên khách hàng `txtTen_dt` và chuyển logic tìm sang tên
+
+Kết quả: thất bại.
+
+Lý do: bản thân lookup vẫn chạy trong data session của form báo cáo và vẫn không có cursor `M_DmDt` đã preload, nên tốc độ không cải thiện đáng kể.
+
+### Hướng 3: Override property lookup trên `txtMa_dt`
+
+Đã thử các property như:
+
+```foxpro
+_fieldlist = Ma_Dt, Ten_Dt
+_filterfieldlist = Ma_Dt, Ten_Dt
+_filtertype = .T.
+_startpos = 1
+```
+
+Kết quả: có nhanh hơn nhưng không đạt yêu cầu nghiệp vụ.
+
+Vấn đề phát sinh:
+
+- Không tìm được giữa chuỗi, ví dụ tên khách hàng là `nguyễn thị bình` nhưng gõ `Thị bình` không ra.
+- Không tìm được theo địa chỉ vì đã bỏ `Dia_Chi` khỏi `FilterFieldList`.
+- Khi trả lại `Dia_Chi` và `_filtertype = .F.`, phát sinh lỗi runtime `Operator/operand type mismatch` trong một số tình huống lookup.
+
+Kết luận: không nên override logic lookup trên control này. Nên để framework dùng metadata chuẩn `ST_File` cho `DMDT`.
+
+### Hướng 4: Bỏ `Format = "!"` để sửa lỗi hiển thị TCVN3
+
+Kết quả: thành công và cần giữ lại.
+
+Lý do: `Format = "!"` ép chữ hoa theo cơ chế ANSI/VFP. Với font/bảng mã TCVN3, thao tác uppercase làm hỏng dấu tiếng Việt. Ví dụ nhập `Tr­êng` có thể bị hiện thành `TR­ÊNG`.
+
+Giải pháp: xóa `Format = "!"` khỏi `txtMa_dt`. Việc này chỉ ảnh hưởng hiển thị/ép hoa, không làm thay đổi logic lookup.
+
+## 4. Giải pháp thành công
+
+Preload cursor `M_DmDt` trong `Init` của chính form `frmKct04`, dùng đúng stored procedure `DmDt_Get`, rồi tạo index local theo `Ma_Dt`.
+
+Mã đã chèn vào `frmKct04.Init`:
+
+```foxpro
+PROCEDURE Init
+DODEFAULT()
+IF NOT USED([M_DmDt])
+   TRY
+      IF TYPE([THIS.oCursorDmDt]) = [U]
+         THIS.AddProperty([oCursorDmDt], .NULL.)
+      ENDIF
+      THIS.oCursorDmDt = CREATEOBJECT([ADOCursorSys], [M_DmDt], [EXECUTE DmDt_Get])
+      IF USED([M_DmDt])
+         SELECT M_DmDt
+         INDEX ON Ma_Dt TAG Ma_Dt
+      ENDIF
+   CATCH
+   ENDTRY
+ENDIF
+ENDPROC
+```
+
+Đồng thời, `txtMa_dt` được giữ ở trạng thái tối thiểu:
+
+```foxpro
+ControlSource = "M.Ma_Dt"
+InputMask = (P16)
+_tablename = DmDt
+Name = "txtMa_dt"
+```
+
+Không còn:
+
+```foxpro
+Format = "!"
+_fieldlist = ...
+_filterfieldlist = ...
+_filtertype = ...
+_startpos = ...
+```
+
+## 5. Kết quả
+
+- Tốc độ tìm khách hàng trên `kct04.scx` cải thiện rõ rệt.
+- Vẫn giữ được logic tìm kiếm chuẩn của framework, bao gồm tìm theo tên và địa chỉ theo metadata `ST_File`.
+- Không còn lỗi hiển thị TCVN3 do ép chữ hoa.
+- Nếu preload thất bại, `TRY...CATCH` giúp form vẫn mở được, chỉ quay lại cơ chế lookup cũ.
+
+## 6. File đã thay đổi
+
+| File | Vai trò |
+|------|---------|
+| `FRM\kct04.scx` | Form điều kiện báo cáo công nợ, đã thêm `Init` preload `M_DmDt` và bỏ `Format = "!"` trên `txtMa_dt` |
+| `FRM\kct04.SCT` | Memo/compiled companion của form, được compile lại sau khi patch |
+
+## 7. Lưu ý vận hành
+
+Sau khi copy bản vá, cần đóng hẳn VP2014 rồi mở lại để chương trình load `kct04.SCT` mới. Nếu chỉ đóng/mở lại riêng màn hình báo cáo trong cùng session cũ, có thể vẫn đang dùng form đã cache trong bộ nhớ.
