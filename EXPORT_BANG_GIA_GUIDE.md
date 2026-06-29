@@ -470,3 +470,36 @@ Qua quá trình theo dõi bằng SQL Server Extended Events, phát hiện lỗi 
 
 ## 4. Kết quả
 Lỗi "Execution error from ADODataCommand" đã bị triệt tiêu hoàn toàn khi lưu phiếu, quá trình lưu diễn ra mượt mà không còn popup cảnh báo.
+
+---
+
+# Báo cáo: Sửa lỗi Cảnh báo "Đến hạn mức thanh toán" khi mức Tới hạn bằng 0
+
+## 1. Phân tích Hiện tượng & Nguyên nhân Lỗi
+
+- **Hiện tượng**: Trên form Chứng từ bán hàng (`ctbhd.scx`), dù người dùng đã cấu hình `Toi_Han = 0` (nghĩa là không muốn dùng tính năng cảnh báo tới hạn nợ), phần mềm vẫn liên tục hiện thông báo nhắc nhở `Den han muc thanh toan!` (Đến hạn mức thanh toán) mỗi khi lưu phiếu hoặc rời khỏi ô nhập Mã khách hàng.
+- **Nguyên nhân gốc rễ (Root Cause)**: Lỗi logic trong mã nguồn (thiếu điều kiện loại trừ số 0).
+  Đoạn code gốc xử lý cảnh báo nợ:
+  ```foxpro
+  IF _No_Cu >= _Toi_Han AND _No_Cu < _Gioi_han
+      MESSAGEBOX('Den han muc thanh toan!', 0+64, M_App_Name)
+  ENDIF
+  ```
+  Về mặt toán học, khi `_Toi_Han = 0`, mọi khách hàng có phát sinh dư nợ (`_No_Cu > 0`) đều thỏa mãn điều kiện `_No_Cu >= 0`. Lập trình viên gốc đã quên thêm điều kiện `AND _Toi_Han <> 0` như đã làm với `_Gioi_Han`, khiến hệ thống hiểu lầm rằng mốc 0 đồng là mốc cảnh báo thay vì là "không cảnh báo".
+
+## 2. Giải pháp Vá lỗi (Patching)
+
+Viết script sửa trực tiếp mã nguồn nội bộ của form `ctbhd.scx` bằng cách tìm và thay thế (STRTRAN) chuỗi lỗi thành chuỗi mới có kèm điều kiện loại trừ `Toi_Han <> 0`.
+
+**Mã Patch thay thế:**
+- **Tìm kiếm chuỗi gốc:** `IF _No_Cu >= _Toi_Han AND _No_Cu < _Gioi_han`
+- **Thay thế bằng chuỗi:** `IF _No_Cu >= _Toi_Han AND _No_Cu < _Gioi_han AND _Toi_Han <> 0`
+
+## 3. Nội dung thực thi và Kết quả
+
+Đã tạo script VFP (`patch_toi_han.prg`) mở form `ctbhd.scx` dạng table và thực hiện thay thế (chạy ẩn qua Powershell COM Object).
+Hệ thống đã quét và thay thế thành công **2 vị trí** bị lỗi logic này trong form:
+1. `txtMa_Dt.LostFocus` (Kiểm tra khi nhập mã khách hàng)
+2. `Command1.Click` (Kiểm tra khi bấm nút Lưu phiếu)
+
+**Kết quả**: Từ nay, với khách hàng có cấu hình `Toi_Han = 0`, hệ thống sẽ im lặng và bỏ qua cảnh báo, chỉ báo lỗi chặn lưu nếu số nợ thực sự vượt quá `Gioi_Han`.
