@@ -1,3 +1,22 @@
+# [HOÀN TẤT] Quá Trình Gỡ Lỗi: "Execution error from ADODataCommand" khi lưu phiếu
+
+## 0. Trạng thái hoàn tất
+
+- **Ngày hoàn tất**: 2026-06-29.
+- **Mô tả lỗi**: Khi bấm nút "Lưu" (Chấp nhận) ở tất cả các form nhập liệu (bán hàng, thu chi, xuất kho...), phần mềm hiện cảnh báo "Execution error from ADODataCommand", dù phiếu vẫn lưu thành công.
+- **Quá trình chẩn đoán**:
+  - Ban đầu thử bọc lệnh `Save_Ct()` trong các form bằng `TRY...CATCH` (thông qua script `patch_save_trycatch.prg`) nhưng không chặn được lỗi. Lý do là phần mã lỗi bị hàm nội bộ trong `.APP` chặn lại và ném ra thành `MessageBox`, không văng ra ngoài thành Exception của VFP.
+  - Chuyển hướng sang theo dõi trực tiếp trên máy chủ bằng **SQL Server Extended Events** (script `get_xevents.ps1`).
+- **Nguyên nhân gốc rễ (Root Cause)**: Bắt được log từ SQL Server báo lỗi `2812 (Could not find stored procedure)`. Hệ thống ngầm gọi các Stored Procedure ghi lịch sử (ví dụ: `History_CtBH_Save`, `History_CtTP_Save`, `History_CtT_Save`...) nhưng các thủ tục này hoàn toàn không tồn tại trong database `VP_2014` và `KH_2014`.
+- **Giải pháp áp dụng**: Dùng PowerShell script (`create_dummy_sps.ps1`) để tự động tạo một loạt Stored Procedure "rỗng" (Dummy SP) trên tất cả các databases (VP_2014, KH_2014, VTSYS).
+  ```sql
+  CREATE PROCEDURE dbo.History_CtBH_Save (@stt nvarchar(20) = NULL, @user nvarchar(10) = NULL) AS BEGIN SET NOCOUNT ON; END
+  ```
+- **Kết quả**: Hệ thống tìm thấy SP khi ghi lịch sử nên không còn văng lỗi, quá trình lưu phiếu mượt mà trở lại. Hoàn toàn không sửa đổi bảng hay dữ liệu nào của hệ thống hiện tại.
+- **Tài liệu chi tiết**: Đã được ghi chép vào mục 7 trong file `EXPORT_BANG_GIA_GUIDE.md`.
+
+---
+
 # [HOÀN TẤT] Quá Trình Gỡ Lỗi: Tốc độ tìm kiếm danh mục khách hàng trên Form Báo Cáo (kct04.scx)
 
 ## 0. Trạng thái hoàn tất

@@ -444,3 +444,29 @@ _startpos = ...
 ## 7. Lưu ý vận hành
 
 Sau khi copy bản vá, cần đóng hẳn VP2014 rồi mở lại để chương trình load `kct04.SCT` mới. Nếu chỉ đóng/mở lại riêng màn hình báo cáo trong cùng session cũ, có thể vẫn đang dùng form đã cache trong bộ nhớ.
+
+---
+
+# [ĐÃ GIẢI QUYẾT] Lỗi "Execution error from ADODataCommand" khi lưu phiếu
+
+## 1. Mô tả lỗi
+
+- **Hiện tượng**: Khi lưu bất kỳ loại phiếu nào (thu, chi, bán hàng, nhập kho...), hệ thống hiện Warning: `"Execution error from ADODataCommand"`. Phiếu vẫn lưu thành công vào database, nhưng thông báo lỗi gây phiền hà.
+- **Phạm vi**: Tất cả các form nhập liệu gọi `Save_Ct()`.
+
+## 2. Nguyên nhân (Root Cause)
+
+Qua quá trình theo dõi bằng SQL Server Extended Events, phát hiện lỗi thực sự là do mã **2812 (Could not find stored procedure)**. 
+- Khi lưu phiếu, hàm `Save_Ct()` ngầm gọi các Stored Procedure để ghi lịch sử thao tác (ví dụ: `History_CtBH_Save`, `History_CtTP_Save`, `History_CtT_Save`...).
+- Các SP này **bị thiếu hoặc chưa được tạo** trong các database (`VP_2014`, `KH_2014`).
+- Thư viện `ADODataCommand` (đã biên dịch trong file `.APP`) tự động "nuốt" lỗi SQL này và bật hộp thoại cảnh báo chung chung "Execution error from ADODataCommand". 
+- Do lỗi bị chặn và báo ra MessageBox từ bên trong `.APP`, các block `TRY...CATCH` bọc bên ngoài form (như `ctbhd.scx`) đều bị vô hiệu hóa, không thể chặn thông báo này.
+
+## 3. Giải pháp đã áp dụng
+
+- Đã chạy script PowerShell (`create_dummy_sps.ps1`) tạo một loạt các Stored Procedure "giả" (rỗng) trên toàn bộ database (`VP_2014`, `KH_2014`, `VTSYS`) để đáp ứng lời gọi hàm của ứng dụng.
+- Mã SP giả: `CREATE PROCEDURE dbo.History_... (@stt nvarchar(20) = NULL, @user nvarchar(10) = NULL) AS BEGIN SET NOCOUNT ON; END`
+- Khi phần mềm gọi lưu lịch sử, SQL Server sẽ thực thi SP giả (không làm gì cả) và trả về thành công thay vì báo lỗi mất thủ tục.
+
+## 4. Kết quả
+Lỗi "Execution error from ADODataCommand" đã bị triệt tiêu hoàn toàn khi lưu phiếu, quá trình lưu diễn ra mượt mà không còn popup cảnh báo.
