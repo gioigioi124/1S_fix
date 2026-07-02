@@ -164,7 +164,11 @@ IF TYPE('K_CtTemp.Chiet_Khau') = 'N' AND K_CtTemp.Chiet_Khau = 0
     SELECT SUM(Tien_Nt4) FROM K_CtTemp INTO ARRAY laFixCk
     SELECT SUM(Tien4) FROM K_CtTemp INTO ARRAY laFixCk2
     REPLACE TTien_Nt4 WITH NVL(laFixCk[1], 0), TTien4 WITH NVL(laFixCk2[1], 0) IN K_PhTemp1
-    =So_Luong3(THISFORM)
+    IF K_CtTemp.Loai_Vt = '3'
+        =So_Luong3(THISFORM)
+    ELSE
+        =So_Luong2(THISFORM)
+    ENDIF
     THISFORM.Refresh()
 ELSE
     * Chiet khau > 0: goi ham he thong binh thuong (van hoat dong dung)
@@ -243,7 +247,11 @@ IF TYPE('THISFORM._VARREAD2') = 'C' AND THISFORM._VARREAD2 = 'GIA_NT9'
         SELECT SUM(Tien_Nt4) FROM K_CtTemp INTO ARRAY laFixP
         SELECT SUM(Tien4) FROM K_CtTemp INTO ARRAY laFixP2
         REPLACE TTien_Nt4 WITH NVL(laFixP[1], 0), TTien4 WITH NVL(laFixP2[1], 0) IN K_PhTemp1
-        =So_Luong3(THISFORM)
+        IF K_CtTemp.Loai_Vt = '3'
+            =So_Luong3(THISFORM)
+        ELSE
+            =So_Luong2(THISFORM)
+        ENDIF
         THISFORM.Refresh()
     ENDIF
 ENDIF
@@ -503,3 +511,29 @@ Hệ thống đã quét và thay thế thành công **2 vị trí** bị lỗi l
 2. `Command1.Click` (Kiểm tra khi bấm nút Lưu phiếu)
 
 **Kết quả**: Từ nay, với khách hàng có cấu hình `Toi_Han = 0`, hệ thống sẽ im lặng và bỏ qua cảnh báo, chỉ báo lỗi chặn lưu nếu số nợ thực sự vượt quá `Gioi_Han`.
+
+---
+
+# Báo cáo: Sửa lỗi "Nhảy sai số lượng" (Quantity Reset Bug) khi đi qua cột Chiết khấu
+
+## 1. Mô tả Lỗi
+Sau khi áp dụng bản vá "Lỗi loại trừ số 0 khi xóa chiết khấu", người dùng phát hiện lỗi phụ (regression): khi xuất mặt hàng "Mút" (mã 50, loại vật tư là 2), hệ số và số lượng ban đầu nhảy đúng. Tuy nhiên, khi bấm Enter đi qua cột `Chiết khấu`, phần mềm lập tức tính lại và xóa bỏ hệ số, làm `Số lượng = Số tấm` (nhảy sai số lượng).
+
+## 2. Phân tích Nguyên nhân
+- Lỗi phát sinh do bản vá cũ gán cứng (hardcode) lời gọi hàm `=So_Luong3(THISFORM)` khi Chiết khấu = 0 để ép form cập nhật lại tổng tiền.
+- Tuy nhiên, hàm `So_Luong3()` của file lõi `.APP` được thiết kế **độc quyền cho vật tư loại 3** (`Loai_Vt = '3'`).
+- Mặt hàng mút mã 50 của người dùng thực chất được khai báo là **Loại vật tư 2** (`Loai_Vt = '2'`). Sự kiện `When` của cột hệ số cho phép `Loai_Vt` '2' và '3' được nhập hệ số (`INLIST(K_CtTemp.Loai_Vt, '2', '3')`). Nhưng về mặt tính toán, khi ép vật tư loại 2 đi qua hàm `So_Luong3()`, thuật toán lõi bị sai lệch và nó tự động reset lại số lượng thành logic chuẩn không hệ số (xóa bỏ số lượng đã nhập).
+
+## 3. Giải pháp Triệt để (Fix - 2026-07-02)
+Sửa lại cấu trúc của bản vá tại sự kiện `LostFocus` của cột Chiết Khấu (và các bản vá liên quan đến xóa chiết khấu). Thay vì gọi mù quáng `So_Luong3()`, ta tái lập logic phân luồng chuẩn của hệ thống:
+
+**Đoạn mã đúng:**
+```foxpro
+IF K_CtTemp.Loai_Vt = '3'
+    =So_Luong3(THISFORM)  && Dành riêng cho vật tư loại 3
+ELSE
+    =So_Luong2(THISFORM)  && Dành cho vật tư loại 1, loại 2 (có hoặc không có hệ số)
+ENDIF
+THISFORM.Refresh()
+```
+*(Lưu ý: Giải pháp này đã được áp dụng trực tiếp vào các code mẫu ở phần trên của tài liệu để tránh lỗi tái diễn nếu cần vá lại).*
