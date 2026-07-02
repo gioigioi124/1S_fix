@@ -5,12 +5,12 @@ Tài liệu này lưu trữ cấu trúc, quy tắc và đoạn mã chuẩn để
 ## Yêu cầu và Quy tắc quan trọng
 
 1. **Sắp xếp Mã Hàng Hóa (Bắt buộc)**
-   - Phần mềm VFP gốc hiển thị hàng hóa sắp xếp theo nguyên tắc chuỗi (alphabetical string) từ mã hàng hóa (chữ cái và số từ thấp đến cao, bỏ qua giá trị độ lớn số học). 
+   - Phần mềm VFP gốc hiển thị hàng hóa sắp xếp theo nguyên tắc chuỗi (alphabetical string) từ mã hàng hóa (chữ cái và số từ thấp đến cao, bỏ qua giá trị độ lớn số học).
    - Ví dụ: `1xx` luôn xếp trước `2xx`. Mã `8171160200` sẽ được nhóm cùng `8171180200353843`.
    - **Mã SQL**: Luôn sử dụng mệnh đề `ORDER BY b.Stt, RTRIM(b0.Ma_Vt) ASC`. Tuyệt đối không dùng `b0.Stt0` (thứ tự dòng nhập) để sắp xếp vì nó sẽ làm sai lệch cách hiển thị với phần mềm.
 
 2. **Cấu trúc File Excel**
-   - **Tách Sheet**: Mỗi đợt bảng giá (có thể phân biệt bằng cột `Stt` của bảng `BG`) phải được xuất ra **một sheet riêng biệt**. 
+   - **Tách Sheet**: Mỗi đợt bảng giá (có thể phân biệt bằng cột `Stt` của bảng `BG`) phải được xuất ra **một sheet riêng biệt**.
    - **Tên Sheet**: Đặt tên kết hợp giữa `So_Ct` và `Ma_Vm` để dễ nhìn. Đảm bảo tên sheet phải được xử lý độ dài tối đa (31 ký tự), xóa các ký tự không hợp lệ `[ ] / \ ? * :` và xử lý trùng tên sheet (thêm `_1`, `_2` nếu cần).
    - **Bảo toàn dữ liệu**: Cột "Mã Vật Tư" khi đưa vào Excel bắt buộc phải ép kiểu thành văn bản (Trong PowerShell Excel COM: `$sheet.Columns.Item(3).NumberFormat = "@"`). Nếu bỏ qua bước này, Excel sẽ tự động convert mã hàng thành số khoa học (như `8.17E+15`) làm hỏng dữ liệu.
 
@@ -25,19 +25,19 @@ Tài liệu này lưu trữ cấu trúc, quy tắc và đoạn mã chuẩn để
 Sử dụng câu lệnh sau và thay đổi điều kiện `b.Ngay_Ct` cho phù hợp:
 
 ```sql
-SELECT 
-    RTRIM(b.Stt) AS [Stt_ID], 
-    RTRIM(b.So_Ct) AS [So_Ct], 
-    RTRIM(b.Ma_Vm) AS [Khu_Vuc], 
-    RTRIM(b.Ma_Dt) AS [Doi_Tuong], 
-    RTRIM(b0.Ma_Vt) AS [Ma_Vat_Tu], 
-    RTRIM(v.Ten_Vt) AS [Ten_Vat_Tu], 
-    RTRIM(b0.Dvt) AS [DVT], 
-    b0.Gia AS [Gia_Ban], 
-    b0.CK AS [Chiet_Khau_Phan_Tram] 
-FROM VP_2014.dbo.BG b 
-JOIN VP_2014.dbo.BG0 b0 ON b.stt = b0.stt 
-LEFT JOIN VTSYS.dbo.DmVt v ON b0.Ma_Vt = v.Ma_Vt 
+SELECT
+    RTRIM(b.Stt) AS [Stt_ID],
+    RTRIM(b.So_Ct) AS [So_Ct],
+    RTRIM(b.Ma_Vm) AS [Khu_Vuc],
+    RTRIM(b.Ma_Dt) AS [Doi_Tuong],
+    RTRIM(b0.Ma_Vt) AS [Ma_Vat_Tu],
+    RTRIM(v.Ten_Vt) AS [Ten_Vat_Tu],
+    RTRIM(b0.Dvt) AS [DVT],
+    b0.Gia AS [Gia_Ban],
+    b0.CK AS [Chiet_Khau_Phan_Tram]
+FROM VP_2014.dbo.BG b
+JOIN VP_2014.dbo.BG0 b0 ON b.stt = b0.stt
+LEFT JOIN VTSYS.dbo.DmVt v ON b0.Ma_Vt = v.Ma_Vt
 WHERE b.Ngay_Ct = '2026-04-01'
 ORDER BY b.Stt, RTRIM(b0.Ma_Vt) ASC
 ```
@@ -65,6 +65,7 @@ ORDER BY b.Stt, RTRIM(b0.Ma_Vt) ASC
 Do hàm tính toán gốc `So_Luong2()` đã bị đóng gói nhị phân (compiled) và không thể sửa thẳng, chúng ta áp dụng chiến thuật **"Đánh lừa ngưỡng làm tròn" (Threshold Bypass)** bằng cách can thiệp vào tầng ngoài (giao diện form `ctbhd.scx`):
 
 **Thuật toán can thiệp:**
+
 1. Chèn mã vào sự kiện `LostFocus` của cột Đơn giá và Số lượng, ngay TRƯỚC KHI lệnh gọi `So_Luong2()` được kích hoạt.
 2. Tự tính nhẩm: `Tien_Moi_Dung = ROUND(Số Lượng * Đơn Giá, 2)`.
 3. Nếu `Tien_Moi_Dung` có khác biệt với `Thành tiền cũ` (nghĩa là thực sự có sự thay đổi do người dùng gõ phím), ta sẽ cố ý cộng thêm một con số ảo khổng lồ (Ví dụ: `+ 1.000.000`) vào `Thành tiền cũ`.
@@ -90,7 +91,7 @@ IF K_CtTemp.Loai_Vt = '3'
 ...
 ```
 
-*Lưu ý: Mọi chỉnh sửa đều đã được Compile thành công vào file `ctbhd.scx`. Người dùng chỉ việc mở phần mềm lên lập phiếu là lỗi đã hoàn toàn biến mất.*
+_Lưu ý: Mọi chỉnh sửa đều đã được Compile thành công vào file `ctbhd.scx`. Người dùng chỉ việc mở phần mềm lên lập phiếu là lỗi đã hoàn toàn biến mất._
 
 ---
 
@@ -106,12 +107,13 @@ IF K_CtTemp.Loai_Vt = '3'
 
 ## 2. Giải pháp Vá lỗi (Client-side Validation Workaround)
 
-Do "cửa chính" ở tầng Database Server (SQL) đã bị khóa, chúng ta buộc phải xử lý chặn ở "cửa sổ" tầng Client (ngay trên Form VFP). 
+Do "cửa chính" ở tầng Database Server (SQL) đã bị khóa, chúng ta buộc phải xử lý chặn ở "cửa sổ" tầng Client (ngay trên Form VFP).
 
 **Chiến thuật thực hiện:**
-1. **Viết thư viện kiểm duyệt rời (`SO_Price_Fix.PRG`)**: 
-   - Tạo một đoạn mã độc lập dùng `ADODB.Recordset` để móc trực tiếp vào SQL Server (chỉ dùng lệnh `SELECT` để đảm bảo an toàn tuyệt đối, không ghi đè dữ liệu). 
-   - Hàm `CheckPriceExpiry` sẽ nhận vào: *Mã khách hàng, Mã vật tư, Ngày lập hóa đơn* và *Đơn giá gốc* do phần mềm vừa lấy ra. 
+
+1. **Viết thư viện kiểm duyệt rời (`SO_Price_Fix.PRG`)**:
+   - Tạo một đoạn mã độc lập dùng `ADODB.Recordset` để móc trực tiếp vào SQL Server (chỉ dùng lệnh `SELECT` để đảm bảo an toàn tuyệt đối, không ghi đè dữ liệu).
+   - Hàm `CheckPriceExpiry` sẽ nhận vào: _Mã khách hàng, Mã vật tư, Ngày lập hóa đơn_ và _Đơn giá gốc_ do phần mềm vừa lấy ra.
    - Nó sẽ quét qua bảng `BG` (Header bảng giá) và `BG0` (Chi tiết bảng giá). Nếu phát hiện hóa đơn lập sau ngày hết hạn (`Ngay_Ct > Ngay_Ct2`), nó sẽ thẳng tay ép Đơn giá về `0`. (Làm tương tự cho Chiết khấu).
 2. **Biên dịch**: File `.PRG` được VFP biên dịch thành `SO_Price_Fix.FXP` nằm song song trong thư mục phần mềm.
 3. **Patch Form (`ctbhd.scx`)**: Dùng mã lệnh tự động (Script) chèn thêm một đoạn code vào form để "đón lõng" kết quả. Ngay sau khi phần mềm lấy giá sai từ SQL Server về, ta ép nó phải đi qua trạm kiểm duyệt (file `.FXP` của chúng ta) trước khi điền lên giao diện.
@@ -119,6 +121,7 @@ Do "cửa chính" ở tầng Database Server (SQL) đã bị khóa, chúng ta bu
 ## 3. Nội dung Mã Patch
 
 **Mã chèn vào form `ctbhd.scx` (Trạm đón lõng giá):**
+
 ```foxpro
 ADOCommand('SO_Get_Price', '@p_Ngay_Ct = ?K_PhTemp1.Ngay_Ct, ... @p_Gia = ?@_Gia')
 * --- BẮT ĐẦU MÃ CHÈN THÊM ---
@@ -127,7 +130,8 @@ _Gia = CheckPriceExpiry(K_PhTemp1.Ngay_Ct, K_PhTemp1.Ma_Dt, m.Ma_Vt, _Gia)
 * --- KẾT THÚC MÃ CHÈN THÊM ---
 REPLACE Gia_Nt9 WITH _Gia IN K_CtTemp
 ```
-*(Cấu trúc đón lõng tương tự được áp dụng cho tính năng Chiết khấu `SO_Get_Discount`)*
+
+_(Cấu trúc đón lõng tương tự được áp dụng cho tính năng Chiết khấu `SO_Get_Discount`)_
 
 ## 4. Lưu ý Vận hành & Bảo trì
 
@@ -164,11 +168,7 @@ IF TYPE('K_CtTemp.Chiet_Khau') = 'N' AND K_CtTemp.Chiet_Khau = 0
     SELECT SUM(Tien_Nt4) FROM K_CtTemp INTO ARRAY laFixCk
     SELECT SUM(Tien4) FROM K_CtTemp INTO ARRAY laFixCk2
     REPLACE TTien_Nt4 WITH NVL(laFixCk[1], 0), TTien4 WITH NVL(laFixCk2[1], 0) IN K_PhTemp1
-    IF K_CtTemp.Loai_Vt = '3'
-        =So_Luong3(THISFORM)
-    ELSE
-        =So_Luong2(THISFORM)
-    ENDIF
+    REPLACE TTien_Nt WITH TTien_Nt2 + TTien_Nt3 - TTien_Nt4, TTien WITH TTien2 + TTien3 - TTien4 IN K_PhTemp1
     THISFORM.Refresh()
 ELSE
     * Chiet khau > 0: goi ham he thong binh thuong (van hoat dong dung)
@@ -182,6 +182,7 @@ ENDPROC
 Bổ sung **2 lớp bảo vệ** ngay trước lệnh `=Save_Ct()`:
 
 **Lớp 1 - Flush Buffer (ép ghi giá trị từ ô đang soạn xuống CSDL tạm):**
+
 ```foxpro
 IF TYPE('THISFORM.ActiveControl.Name') = 'C'
     LOCAL loControl
@@ -200,6 +201,7 @@ ENDIF
 ```
 
 **Lớp 2 - Quét toàn bộ lưới (SCAN) trước khi lưu:**
+
 ```foxpro
 SELECT K_CtTemp
 lnSaveRecno2 = RECNO()
@@ -209,21 +211,29 @@ SCAN FOR NOT DELETED()
     ENDIF
 ENDSCAN
 SELECT SUM(Tien_Nt4) FROM K_CtTemp INTO ARRAY laDscFix
-REPLACE TTien_Nt4 WITH NVL(laDscFix[1], 0) IN K_PhTemp1
-GO lnSaveRecno2 IN K_CtTemp
-=So_Luong3(THISFORM)
+SELECT SUM(Tien4) FROM K_CtTemp INTO ARRAY laDscFix2
+REPLACE TTien_Nt4 WITH NVL(laDscFix[1], 0), TTien4 WITH NVL(laDscFix2[1], 0) IN K_PhTemp1
+REPLACE TTien_Nt WITH TTien_Nt2 + TTien_Nt3 - TTien_Nt4, TTien WITH TTien2 + TTien3 - TTien4 IN K_PhTemp1
+SELECT K_CtTemp
+IF BETWEEN(lnSaveRecno2, 1, RECCOUNT())
+    GO lnSaveRecno2
+ENDIF
+SELECT (lnSaveArea2)
+THISFORM.Refresh()
+* === KET THUC QUET ===
+=Save_Ct(THISFORM._Moi_Sua)
 ```
 
 ## 3. Lịch sử Sửa lỗi & Bài học
 
-| Lần | Phương pháp | Kết quả | Nguyên nhân thất bại |
-|-----|-------------|---------|---------------------|
-| 1 | Ép `Tien_Nt4=0` TRƯỚC `=Chiet_Khau()` | ❌ Thất bại | Hàm hệ thống ghi đè ngược |
-| 2 | Thêm SUM check SAU `=Chiet_Khau()` | ❌ Thất bại | Hàm hệ thống ghi Tien_Nt4 ≠ 0, SUM ≠ 0, bỏ qua fix |
-| 3 | Dùng toán thủ công (TTien_Nt + TTien_Nt4) | ❌ Thất bại | Sai khi nhiều trường thay đổi đồng thời |
-| 4 | SetFocus vào nút Lưu | ❌ Lỗi runtime | Nút Lưu nằm trong CommandGroup |
-| 5 | SetFocus vào txtNgay_Ct | ⚠️ Một phần | Chỉ fix Ctrl+Enter, không fix Enter |
-| **6** | **BYPASS hàm hệ thống + SCAN trước lưu** | **✅ Thành công** | **Không gọi hàm lỗi → không bị ghi đè** |
+| Lần   | Phương pháp                               | Kết quả           | Nguyên nhân thất bại                               |
+| ----- | ----------------------------------------- | ----------------- | -------------------------------------------------- |
+| 1     | Ép `Tien_Nt4=0` TRƯỚC `=Chiet_Khau()`     | ❌ Thất bại       | Hàm hệ thống ghi đè ngược                          |
+| 2     | Thêm SUM check SAU `=Chiet_Khau()`        | ❌ Thất bại       | Hàm hệ thống ghi Tien_Nt4 ≠ 0, SUM ≠ 0, bỏ qua fix |
+| 3     | Dùng toán thủ công (TTien_Nt + TTien_Nt4) | ❌ Thất bại       | Sai khi nhiều trường thay đổi đồng thời            |
+| 4     | SetFocus vào nút Lưu                      | ❌ Lỗi runtime    | Nút Lưu nằm trong CommandGroup                     |
+| 5     | SetFocus vào txtNgay_Ct                   | ⚠️ Một phần       | Chỉ fix Ctrl+Enter, không fix Enter                |
+| **6** | **BYPASS hàm hệ thống + SCAN trước lưu**  | **✅ Thành công** | **Không gọi hàm lỗi → không bị ghi đè**            |
 
 > **Bài học quan trọng**: Khi hàm hệ thống có bug, **KHÔNG BAO GIỜ** cố sửa output của nó. Hãy **BYPASS hoàn toàn** và tự xử lý.
 
@@ -261,10 +271,10 @@ ENDIF
 
 # Danh sách File phụ thuộc
 
-| File | Vai trò |
-|------|---------|
+| File                      | Vai trò                             |
+| ------------------------- | ----------------------------------- |
 | `ctbhd.scx` + `ctbhd.sct` | Form chính (đã patch tất cả bản vá) |
-| `SO_Price_Fix.FXP` | Thư viện kiểm tra hạn bảng giá |
+| `SO_Price_Fix.FXP`        | Thư viện kiểm tra hạn bảng giá      |
 
 > **Cảnh báo**: Khi copy phần mềm sang máy khác, bắt buộc phải copy đủ 3 file trên.
 
@@ -273,20 +283,26 @@ ENDIF
 # Báo cáo: Sửa lỗi Giá/Chiết khấu bị giữ lại khi Đổi Mã Hàng Hóa
 
 ## 1. Mô tả Lỗi
+
 Trên form `ctbhd.scx`, khi người dùng đổi mã hàng hóa (hoặc tên hàng) trên một dòng đã có sẵn dữ liệu, đơn giá và chiết khấu của mã cũ không bị xóa đi. Điều này dẫn đến việc hệ thống không tra cứu giá mới cho mã hàng vừa thay đổi (trừ khi người dùng phải tự xóa giá về 0 trước).
 
 ## 2. Phân tích Nguyên nhân
+
 Đoạn code trong sự kiện `LostFocus` của cột Mã hàng (`Ma_Vt`) và Tên hàng (`Ten_Vt`) có logic như sau:
+
 ```foxpro
 IF ISNULL(K_CtTemp.Gia_Nt9) OR EMPTY(K_CtTemp.Gia_Nt9)
     ADOCommand('SO_Get_Price', ...)
 ```
+
 Điều kiện này chỉ cho phép tra cứu giá mới khi ô đơn giá **đang trống hoặc bằng 0**. Khi đổi mã hàng trên dòng đã có sẵn dữ liệu, đơn giá đang có giá trị lớn hơn 0, nên toàn bộ quá trình tra cứu giá bị bỏ qua. Ý đồ ban đầu của đoạn code này là để bảo vệ mức giá nhập tay khỏi bị ghi đè, nhưng nó lại gây tác dụng phụ khi người dùng thực sự muốn đổi mã hàng.
 
 ## 3. Giải pháp Triệt để (Fix - 2026-06-24)
+
 Chèn thêm lệnh tự động xóa sạch giá và chiết khấu cũ ngay khi phát hiện người dùng thay đổi mã hàng (biến `_Ma_vt_change` hoặc `_ten_vt_change` là `.T.`). Việc này đảm bảo điều kiện tra cứu giá luôn thỏa mãn đối với mã hàng mới.
 
 **Mã Patch (đã chèn vào `LostFocus` của cột `Ma_Vt` và `Ten_Vt`):**
+
 ```foxpro
 * FIX: Xoa gia/chiet khau cu khi doi ma hang de tra cuu lai gia moi
 REPLACE Gia_Nt9 WITH 0, Chiet_Khau WITH 0, Tien_Nt4 WITH 0, Tien4 WITH 0 IN K_CtTemp
@@ -297,19 +313,24 @@ REPLACE Gia_Nt9 WITH 0, Chiet_Khau WITH 0, Tien_Nt4 WITH 0, Tien4 WITH 0 IN K_Ct
 # Báo cáo: Sửa lỗi Giới hạn Nợ bị Cache (Stale Credit Limit Bug)
 
 ## 1. Mô tả Lỗi
+
 Trên form `ctbhd.scx`, khi người dùng nhập mã khách hàng hoặc lưu chứng từ, hệ thống kiểm tra dư nợ thực tế so với Giới hạn nợ. Nếu người dùng mở một tab khác của phần mềm để nâng Giới hạn nợ lên, sau đó quay lại form xuất hàng (không đóng form) và nhấn Lưu, hệ thống vẫn báo lỗi "Quá giới hạn nợ!". Người dùng bắt buộc phải thoát form và vào lại thì giới hạn nợ mới được cập nhật.
 
 ## 2. Phân tích Nguyên nhân
+
 Khi kiểm tra giới hạn nợ, hệ thống sử dụng 2 nguồn dữ liệu:
+
 - **Dư nợ thực tế**: Lấy trực tiếp từ SQL Server (thông qua hàm `GL_Alert_ClosingAccount4Customer`). Số liệu này luôn mới nhất.
 - **Giới hạn nợ (`Gioi_Han`, `Toi_Han`)**: Lấy từ cursor cục bộ `M_DmDt` (hoặc `M_DmNhDtKS` đối với nhóm khách hàng). Cursor này được tải vào RAM khi form vừa mở ra và **không bao giờ tự làm mới**.
 
 Hệ thống so sánh Dư nợ (Mới) với Giới hạn nợ (Cũ), dẫn đến việc chặn sai dù đã nâng hạn mức.
 
 ## 3. Giải pháp Triệt để (Fix - 2026-06-27)
+
 Thay vì đọc `Gioi_Han` và `Toi_Han` từ cursor cục bộ bị cache, ta sử dụng ADO (thông qua đối tượng `oConnDataSource` có sẵn của form) để query trực tiếp SQL Server (`VTSYS.dbo.DmDt` và `VTSYS.dbo.DmNhDt`) ngay tại thời điểm nhấn nút Lưu hoặc khi nhập mã khách hàng.
 
 **Mã Patch (đã chèn vào `LostFocus` của `txtMa_Dt` và `Click` của nút Lưu):**
+
 ```foxpro
 * FIX: Lay Gioi_Han tu SQL Server thay vi cursor cu
 LOCAL loRS_GH2, lcSQL_GH2
@@ -328,6 +349,7 @@ CATCH
     _Toi_Han = M_DmDt.Toi_Han
 ENDTRY
 ```
+
 Giải pháp này an toàn vì không làm thay đổi hay tạo Stored Procedure rác trên SQL Server, và có cơ chế `TRY...CATCH` tự động lùi về phiên bản cũ (fallback) nếu query bị lỗi.
 
 ---
@@ -444,10 +466,10 @@ _startpos = ...
 
 ## 6. File đã thay đổi
 
-| File | Vai trò |
-|------|---------|
+| File            | Vai trò                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
 | `FRM\kct04.scx` | Form điều kiện báo cáo công nợ, đã thêm `Init` preload `M_DmDt` và bỏ `Format = "!"` trên `txtMa_dt` |
-| `FRM\kct04.SCT` | Memo/compiled companion của form, được compile lại sau khi patch |
+| `FRM\kct04.SCT` | Memo/compiled companion của form, được compile lại sau khi patch                                     |
 
 ## 7. Lưu ý vận hành
 
@@ -464,10 +486,11 @@ Sau khi copy bản vá, cần đóng hẳn VP2014 rồi mở lại để chươn
 
 ## 2. Nguyên nhân (Root Cause)
 
-Qua quá trình theo dõi bằng SQL Server Extended Events, phát hiện lỗi thực sự là do mã **2812 (Could not find stored procedure)**. 
+Qua quá trình theo dõi bằng SQL Server Extended Events, phát hiện lỗi thực sự là do mã **2812 (Could not find stored procedure)**.
+
 - Khi lưu phiếu, hàm `Save_Ct()` ngầm gọi các Stored Procedure để ghi lịch sử thao tác (ví dụ: `History_CtBH_Save`, `History_CtTP_Save`, `History_CtT_Save`...).
 - Các SP này **bị thiếu hoặc chưa được tạo** trong các database (`VP_2014`, `KH_2014`).
-- Thư viện `ADODataCommand` (đã biên dịch trong file `.APP`) tự động "nuốt" lỗi SQL này và bật hộp thoại cảnh báo chung chung "Execution error from ADODataCommand". 
+- Thư viện `ADODataCommand` (đã biên dịch trong file `.APP`) tự động "nuốt" lỗi SQL này và bật hộp thoại cảnh báo chung chung "Execution error from ADODataCommand".
 - Do lỗi bị chặn và báo ra MessageBox từ bên trong `.APP`, các block `TRY...CATCH` bọc bên ngoài form (như `ctbhd.scx`) đều bị vô hiệu hóa, không thể chặn thông báo này.
 
 ## 3. Giải pháp đã áp dụng
@@ -477,6 +500,7 @@ Qua quá trình theo dõi bằng SQL Server Extended Events, phát hiện lỗi 
 - Khi phần mềm gọi lưu lịch sử, SQL Server sẽ thực thi SP giả (không làm gì cả) và trả về thành công thay vì báo lỗi mất thủ tục.
 
 ## 4. Kết quả
+
 Lỗi "Execution error from ADODataCommand" đã bị triệt tiêu hoàn toàn khi lưu phiếu, quá trình lưu diễn ra mượt mà không còn popup cảnh báo.
 
 ---
@@ -500,6 +524,7 @@ Lỗi "Execution error from ADODataCommand" đã bị triệt tiêu hoàn toàn 
 Viết script sửa trực tiếp mã nguồn nội bộ của form `ctbhd.scx` bằng cách tìm và thay thế (STRTRAN) chuỗi lỗi thành chuỗi mới có kèm điều kiện loại trừ `Toi_Han <> 0`.
 
 **Mã Patch thay thế:**
+
 - **Tìm kiếm chuỗi gốc:** `IF _No_Cu >= _Toi_Han AND _No_Cu < _Gioi_han`
 - **Thay thế bằng chuỗi:** `IF _No_Cu >= _Toi_Han AND _No_Cu < _Gioi_han AND _Toi_Han <> 0`
 
@@ -507,6 +532,7 @@ Viết script sửa trực tiếp mã nguồn nội bộ của form `ctbhd.scx` 
 
 Đã tạo script VFP (`patch_toi_han.prg`) mở form `ctbhd.scx` dạng table và thực hiện thay thế (chạy ẩn qua Powershell COM Object).
 Hệ thống đã quét và thay thế thành công **2 vị trí** bị lỗi logic này trong form:
+
 1. `txtMa_Dt.LostFocus` (Kiểm tra khi nhập mã khách hàng)
 2. `Command1.Click` (Kiểm tra khi bấm nút Lưu phiếu)
 
@@ -517,23 +543,78 @@ Hệ thống đã quét và thay thế thành công **2 vị trí** bị lỗi l
 # Báo cáo: Sửa lỗi "Nhảy sai số lượng" (Quantity Reset Bug) khi đi qua cột Chiết khấu
 
 ## 1. Mô tả Lỗi
+
 Sau khi áp dụng bản vá "Lỗi loại trừ số 0 khi xóa chiết khấu", người dùng phát hiện lỗi phụ (regression): khi xuất mặt hàng "Mút" (mã 50, loại vật tư là 2), hệ số và số lượng ban đầu nhảy đúng. Tuy nhiên, khi bấm Enter đi qua cột `Chiết khấu`, phần mềm lập tức tính lại và xóa bỏ hệ số, làm `Số lượng = Số tấm` (nhảy sai số lượng).
 
 ## 2. Phân tích Nguyên nhân
+
 - Lỗi phát sinh do bản vá cũ gán cứng (hardcode) lời gọi hàm `=So_Luong3(THISFORM)` khi Chiết khấu = 0 để ép form cập nhật lại tổng tiền.
 - Tuy nhiên, hàm `So_Luong3()` của file lõi `.APP` được thiết kế **độc quyền cho vật tư loại 3** (`Loai_Vt = '3'`).
 - Mặt hàng mút mã 50 của người dùng thực chất được khai báo là **Loại vật tư 2** (`Loai_Vt = '2'`). Sự kiện `When` của cột hệ số cho phép `Loai_Vt` '2' và '3' được nhập hệ số (`INLIST(K_CtTemp.Loai_Vt, '2', '3')`). Nhưng về mặt tính toán, khi ép vật tư loại 2 đi qua hàm `So_Luong3()`, thuật toán lõi bị sai lệch và nó tự động reset lại số lượng thành logic chuẩn không hệ số (xóa bỏ số lượng đã nhập).
 
 ## 3. Giải pháp Triệt để (Fix - 2026-07-02)
-Sửa lại cấu trúc của bản vá tại sự kiện `LostFocus` của cột Chiết Khấu (và các bản vá liên quan đến xóa chiết khấu). Thay vì gọi mù quáng `So_Luong3()`, ta tái lập logic phân luồng chuẩn của hệ thống:
 
-**Đoạn mã đúng:**
+Qua phân tích sâu hơn, việc gọi bất kỳ hàm tính toán số lượng nào (dù là `So_Luong3` hay `So_Luong2`) tại sự kiện LostFocus của Chiết Khấu hay Nút Lưu đều mang tính **phá hủy dữ liệu (destructive)**. Hàm `So_Luong2()` khi chạy sẽ luôn ép `Số lượng = Số tấm * Hệ số` (hoặc nhân với 1 nếu chưa nhập hệ số), do đó nó sẽ ghi đè và làm mất giá trị "Số lượng" mà người dùng đã sửa tay hoặc nhập trước đó.
+
+Do đó, giải pháp cuối cùng là **LOẠI BỎ HOÀN TOÀN** các lời gọi hàm `=So_Luong3()` và `=So_Luong2()` ra khỏi các khu vực không thuộc về chức năng tính toán số lượng. Thay vào đó, ta chỉ tính nhẩm lại Tổng thanh toán (`TTien_Nt`) bằng công thức cộng trừ số học đơn giản để cập nhật giao diện mà không chạm vào dòng dữ liệu.
+
+**Đoạn mã đúng (đã cập nhật vào form):**
+Thay vì gọi `=So_Luong2()`, ta chỉ tính lại tổng tiền:
+
 ```foxpro
-IF K_CtTemp.Loai_Vt = '3'
-    =So_Luong3(THISFORM)  && Dành riêng cho vật tư loại 3
-ELSE
-    =So_Luong2(THISFORM)  && Dành cho vật tư loại 1, loại 2 (có hoặc không có hệ số)
-ENDIF
-THISFORM.Refresh()
+REPLACE TTien_Nt WITH TTien_Nt2 + TTien_Nt3 - TTien_Nt4, TTien WITH TTien2 + TTien3 - TTien4 IN K_PhTemp1
 ```
-*(Lưu ý: Giải pháp này đã được áp dụng trực tiếp vào các code mẫu ở phần trên của tài liệu để tránh lỗi tái diễn nếu cần vá lại).*
+
+_(Lưu ý: Giải pháp an toàn này đã được áp dụng trực tiếp vào các code mẫu ở phần "Lỗi loại trừ số 0" ở trên để tránh lỗi tái diễn)._
+
+---
+
+# Nhật ký Chuyên sâu: Hành trình xử lý "Lỗi Tự Động Reset Số Lượng" (Quantity Reset Bug) trên Chứng Từ Bán Hàng
+
+_Mục này ghi chú lại chi tiết các sai lầm, nguyên nhân sâu xa và bài học kinh nghiệm trong quá trình vá lỗi tính toán số lượng của form `ctbhd.scx` (Tháng 7/2026)._
+
+## 1. Bối cảnh & Hiện tượng ban đầu
+
+Sau khi áp dụng bản vá **"Lỗi loại trừ số 0 khi xóa chiết khấu"**, người dùng phát hiện ra một tác dụng phụ (regression):
+
+- Khi bán mặt hàng "Mút" (mã bắt đầu bằng 50, Loại VTHH `Loai_Vt = '2'`), người dùng nhập "Số tấm" và "Hệ số", phần mềm tính ra "Số lượng" hoàn toàn chính xác.
+- Tuy nhiên, khi người dùng bấm phím `Enter` đi qua cột `Chiết khấu`, hoặc khi bấm nút **LƯU (Save)** ở dòng cuối cùng, giá trị "Số lượng" đột ngột bị reset, nhảy ngược về đúng bằng giá trị của "Số tấm". Bao nhiêu công sức nhập "Hệ số" hoặc sửa tay số lượng đều bị xóa sổ.
+
+## 2. Chuỗi thất bại & Phân tích nguyên nhân
+
+### Thất bại Lần 1: Gọi mù quáng hàm `So_Luong3()`
+
+- **Hành động**: Trong bản vá xóa chiết khấu cũ, lập trình viên đã gán cứng lệnh `=So_Luong3(THISFORM)` vào sự kiện `LostFocus` của cột Chiết Khấu và ở cuối Nút Lưu, với mục đích ép giao diện cập nhật lại các chỉ số tổng tiền.
+- **Tại sao thất bại**: Hàm `So_Luong3()` trong file `.APP` được viết chuyên biệt **chỉ dành cho vật tư Loại 3**. Khi ép mặt hàng Loại 2 (như mút) chạy qua hàm này, cấu trúc dữ liệu không khớp khiến thuật toán lõi bị sai lệch và nó kích hoạt cơ chế an toàn: tự động xóa bỏ hệ số và reset số lượng về mặc định.
+
+### Thất bại Lần 2: Bọc hàm `IF ... So_Luong3 ELSE So_Luong2`
+
+- **Hành động**: Nhận ra lỗi trên, lập trình viên đã viết script vá lại mã nguồn, chia luồng điều kiện:
+  ```foxpro
+  IF K_CtTemp.Loai_Vt = '3'
+      =So_Luong3(THISFORM)
+  ELSE
+      =So_Luong2(THISFORM)
+  ENDIF
+  ```
+- **Lỗi kỹ thuật phát sinh (Syntax Error)**: Quá trình dùng công cụ PowerShell đẩy đoạn code này vào file `ctbhd.scx` đã gặp lỗi định dạng dấu xuống dòng (LF thay vì CRLF chuẩn của FoxPro). Điều này khiến trình biên dịch VFP báo lỗi _"An IF | ELSE | ENDIF statement is missing"_ (do đếm sai dòng lệnh). Lỗi này sau đó đã được khắc phục bằng script VFP chuẩn.
+- **Tại sao logic này vẫn thất bại**: Mặc dù code đã chạy thành công, lỗi "nhảy số lượng" **vẫn xuất hiện ở dòng cuối khi bấm Lưu**. Nguyên nhân sâu xa (Root Cause) cực kỳ nghiêm trọng được phát hiện:
+  - Bản thân hàm chuẩn `=So_Luong2()` có tính chất **phá hủy (destructive)** đối với thao tác thủ công.
+  - Mỗi khi `So_Luong2()` được gọi, nó luôn luôn chạy lại công thức ép buộc: `Số lượng = Số tấm * 1` (nó tự động lấy Hệ số = 1 từ hàm `dvt_set` hoặc bỏ qua Hệ số đặc biệt ở cột nhập liệu `He_So8`).
+  - Nghĩa là, việc gọi bất kỳ hàm `So_Luong` nào tại các vùng chung (như Chiết Khấu hay Nút Lưu) đều gián tiếp **ghi đè và xóa sổ hoàn toàn** các can thiệp thủ công của người dùng trên cột Số lượng/Hệ số.
+
+## 3. Giải pháp Tối hậu (The Ultimate Fix)
+
+Nhận ra sự phá hoại ngầm của hàm hệ thống, chiến lược được thay đổi 180 độ: **Tuyệt đối KHÔNG ĐƯỢC gọi hàm `So_Luong` ở những vị trí không thuộc quyền hạn của nó.**
+
+- Lập trình viên gốc chưa bao giờ gọi `So_Luong` ở Nút Lưu hay cột Chiết Khấu. Việc gọi chúng là sự "lạm quyền" của bản vá trước đó nhằm cập nhật Tổng thanh toán.
+- **Cách sửa đúng**: Xóa bỏ hoàn toàn lời gọi `=So_Luong2()` và `=So_Luong3()` khỏi `Command1.Click` và `Chiet_Khau.LostFocus`. Thay vào đó, ta sử dụng công thức toán học cơ bản để trực tiếp tính lại Tổng thanh toán (`TTien_Nt`) trên Header (`K_PhTemp1`) mà không chạm vào con trỏ dữ liệu của dòng chi tiết (`K_CtTemp`):
+  ```foxpro
+  REPLACE TTien_Nt WITH TTien_Nt2 + TTien_Nt3 - TTien_Nt4, TTien WITH TTien2 + TTien3 - TTien4 IN K_PhTemp1
+  ```
+
+## 4. Bài học Kinh nghiệm (Lessons Learned)
+
+1. **Bản chất của hàm lõi (Core Functions)**: Không bao giờ được gọi các hàm tính toán hệ thống (như `So_Luong2`, `Chiet_Khau`) ra ngoài ngữ cảnh gốc (original scope) của chúng. Các hàm này thường chứa các hiệu ứng phụ (side effects) nguy hiểm như ghi đè dữ liệu hoặc reset giá trị ngầm.
+2. **Nguyên tắc "Chỉ làm phần việc của mình"**: Nếu mục tiêu là "cập nhật tổng tiền khi xóa chiết khấu", thì **chỉ can thiệp vào các trường tổng tiền** (Ví dụ: `Tien_Nt4`, `TTien_Nt`). Đừng cố ép hệ thống chạy lại nguyên cả một hàm tính toán toàn vẹn (`So_Luong`), vì nó sẽ chạm vào những khu vực không mong muốn.
+3. **Phân tích hồi quy (Regression Analysis)**: Khi một bản vá lỗi gây ra một lỗi mới, nguyên nhân 99% không nằm ở mã nguồn gốc, mà nằm ở sự dư thừa hoặc lạm quyền của chính bản vá đó.
