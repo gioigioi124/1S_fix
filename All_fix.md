@@ -1,4 +1,4 @@
-﻿# Ghi Chú Tổng Hợp Các Bản Sửa
+# Ghi Chú Tổng Hợp Các Bản Sửa
 
 Ngày cập nhật: 2026-07-03
 
@@ -363,3 +363,24 @@ WHERE Stt = '<STT_HEADER>';
 ```
 
 5. Nếu cần sửa form, không gọi `So_Luong2/So_Luong3`; chỉ đồng bộ các field tiền và tổng tiền.
+
+## 9. Chống Trùng Số Chứng Từ Khi Lưu Đồng Thời
+
+### Hiện Tượng
+
+Nếu 2 người dùng mở phiếu bán hàng cùng một lúc, form sẽ cấp phát cùng một số chứng từ (ví dụ: HD2854). Khi cả hai cùng bấm Lưu, số chứng từ sẽ bị trùng lặp trong cơ sở dữ liệu do hệ thống cũ chỉ kiểm tra khóa chính (Stt/GUID) mà không chặn trùng lặp số phiếu.
+
+### Cách Đã Sửa
+
+- Chèn một vòng lặp kiểm tra (`DO WHILE`) ngay trước dòng `=Save_Ct(THISFORM._Moi_Sua)` trong nút Lưu (`Cmgnhan_huy1.Command1.Click`).
+- Logic chỉ kích hoạt khi tạo mới phiếu (`THISFORM._Moi_Sua = 'M'`).
+- Bỏ qua các lệnh truy vấn `SELECT` thủ công (để tránh lỗi ép kiểu trên SQL Server). Thay vào đó, gọi trực tiếp hàm kiểm tra chuẩn của hệ thống: `ADOCommand('ST_Check_Number', ...)`.
+- Nếu phát hiện số phiếu đã tồn tại (`_Check_Dup = 1`), FoxPro sẽ tự động tách số (bằng hàm `VAL()`), cộng thêm 1, ghép lại với tiền tố, và cập nhật vào `K_PhTemp1.So_Ct`.
+- Vòng lặp tiếp tục gọi `ST_Check_Number` với số vừa sinh ra cho đến khi tìm được số trống hoàn toàn, sau đó mới cho phép hàm `Save_Ct` chạy.
+
+### Lưu Ý Quan Trọng (Scoping trong VFP)
+
+- Khi gọi `ADOCommand` của hệ thống, các tham số truyền vào bằng macro substitution (ví dụ: `?_Moi_Sua_Dup`, `?@_Check_Dup`) **phải được khai báo là `PRIVATE`** thay vì `LOCAL`.
+- Trong FoxPro, biến `LOCAL` bị ẩn với các hàm được gọi (như `ADOCommand` / `SQLEXEC`), dẫn đến lỗi "Execution error from ADODataCommand". Khai báo `PRIVATE` giúp hàm kết nối database nhận diện được biến để trả kết quả về đúng.
+- Không dùng `MAX(CAST(...))` trên SQL Server để tránh văng lỗi (Conversion failed) do trong bảng `CtBH` có thể chứa các số chứng từ cũ sai định dạng (có lẫn chữ hoặc sai độ dài). Việc tăng số trực tiếp trên bộ nhớ FoxPro bằng hàm `VAL()` an toàn tuyệt đối.
+
