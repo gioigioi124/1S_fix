@@ -383,4 +383,124 @@ Nếu 2 người dùng mở phiếu bán hàng cùng một lúc, form sẽ cấp
 - Khi gọi `ADOCommand` của hệ thống, các tham số truyền vào bằng macro substitution (ví dụ: `?_Moi_Sua_Dup`, `?@_Check_Dup`) **phải được khai báo là `PRIVATE`** thay vì `LOCAL`.
 - Trong FoxPro, biến `LOCAL` bị ẩn với các hàm được gọi (như `ADOCommand` / `SQLEXEC`), dẫn đến lỗi "Execution error from ADODataCommand". Khai báo `PRIVATE` giúp hàm kết nối database nhận diện được biến để trả kết quả về đúng.
 - Không dùng `MAX(CAST(...))` trên SQL Server để tránh văng lỗi (Conversion failed) do trong bảng `CtBH` có thể chứa các số chứng từ cũ sai định dạng (có lẫn chữ hoặc sai độ dài). Việc tăng số trực tiếp trên bộ nhớ FoxPro bằng hàm `VAL()` an toàn tuyệt đối.
+- **Lỗi Format PADL**: Hàm `PADL(số, độ dài, '0')` của FoxPro sẽ tự động ép số nguyên sang chuỗi bằng hàm `STR()`, vô tình tạo ra chuỗi chứa dấu cách (VD: `STR(339)` = `"       339"`). Nếu không cẩn thận xử lý, `PADL` sẽ cắt lỗi ra `"HD339"` (mất số 0). Cần xử lý triệt để bằng cách lồng ép kiểu và cắt khoảng trắng: `PADL(ALLTRIM(STR(lnNum_Dup)), lnLenNum_Dup, '0')`. Đồng thời ép độ dài phần số tối thiểu là 4 `MAX(LEN(lcNumStr_Dup), 4)` để dù hóa đơn cũ là `HD1`, số mới sinh ra vẫn sẽ đúng format 4 số là `HD0002`.
 
+## 10. Sửa Lỗi Tổng Tiền Trên Phiếu In Bị Thành Tổng Cột `Thành tiền`
+
+### Hiện Tượng
+
+Trên phiếu in bán hàng/xuất bán, dòng `Tổng tiền` bị in bằng tổng cột `Thành tiền` trước chiết khấu thay vì tổng cột `Thanh toán` sau chiết khấu.
+
+Ví dụ có 2 dòng:
+
+```text
+Dòng 1:
+Thành tiền = 8,430,000
+CK         = 54%
+Thanh toán = 3,877,800
+
+Dòng 2:
+Thành tiền = 2
+Thanh toán = 2
+```
+
+Phiếu in sai:
+
+```text
+Tổng tiền = 8,430,002
+```
+
+Đúng phải là:
+
+```text
+Tổng tiền = 3,877,802
+```
+
+### Nguyên Nhân
+
+Mẫu in `RPT\cthd.frx`, `RPT\ctpxg.frx`, `RPT\cttl.frx`... dùng:
+
+- Cột `Thanh toán`: `Tien_Nt2`
+- Dòng tổng: `m.TTien_Nt2`
+- Cột `Thành tiền`: `Tien_Nt9`
+
+Trong bản sửa chiết khấu trước đó, 2 block trong form `FRM\ctbhd.scx` đã tính lại header sai:
+
+- `RECNO 46`: `Chiet_Khau.LostFocus`
+- `RECNO 59`: `Cmgnhan_huy1.Command1.Click`, ngay trước `Save_Ct()`
+
+Code lỗi:
+
+```foxpro
+SELECT SUM(Tien_Nt9) FROM K_CtTemp WHERE NOT DELETED() INTO ARRAY laDscAmt
+SELECT SUM(Tien9) FROM K_CtTemp WHERE NOT DELETED() INTO ARRAY laDscAmt2
+REPLACE TTien_Nt2 WITH NVL(laDscAmt[1], 0), ;
+        TTien2 WITH NVL(laDscAmt2[1], 0) IN K_PhTemp1
+```
+
+`TTien_Nt2` là tổng cột `Thanh toán`, nhưng lại bị gán bằng `SUM(Tien_Nt9)`, tức tổng cột `Thành tiền`. Vì mẫu in lấy dòng tổng từ `m.TTien_Nt2`, số in ra bị sai.
+
+Ngoài ra, khi `TTien_Nt2` đã được hiểu là tổng thanh toán sau CK, công thức sau cũng có nguy cơ trừ chiết khấu lần hai:
+
+```foxpro
+REPLACE TTien_Nt0 WITH TTien_Nt2 + TTien_Nt3 - TTien_Nt4, ;
+        TTien0 WITH TTien2 + TTien3 - TTien4 IN K_PhTemp1
+```
+
+### Cách Đã Sửa
+
+Trong cả 2 block `RECNO 46` và `RECNO 59`, đổi phần tính tổng từ `Tien_Nt9/Tien9` sang `Tien_Nt2/Tien2`:
+
+```foxpro
+SELECT SUM(Tien_Nt2) FROM K_CtTemp WHERE NOT DELETED() INTO ARRAY laDscAmt
+SELECT SUM(Tien2) FROM K_CtTemp WHERE NOT DELETED() INTO ARRAY laDscAmt2
+REPLACE TTien_Nt2 WITH NVL(laDscAmt[1], 0), ;
+        TTien2 WITH NVL(laDscAmt2[1], 0) IN K_PhTemp1
+```
+
+Đồng thời đổi công thức tổng cuối sang không trừ CK lần hai:
+
+```foxpro
+REPLACE TTien_Nt0 WITH TTien_Nt2 + TTien_Nt3, ;
+        TTien0 WITH TTien2 + TTien3 IN K_PhTemp1
+```
+
+Sau khi sửa, compile lại:
+
+```foxpro
+COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+```
+
+### Lưu Ý Về Dữ Liệu Đã Lưu Sai
+
+Lỗi này không chỉ ảnh hưởng giao diện/form tại thời điểm in. Nếu phiếu đã được lưu bằng bản lỗi, header trong database có thể đã bị ghi sai:
+
+```text
+CtBH.TTien_Nt2 = SUM(CtBH0.Tien_Nt9)
+```
+
+Do đó, dù quay về phần mềm cũ, phiếu vẫn có thể in sai vì mẫu in đọc lại `TTien_Nt2` đã nằm sai trong database.
+
+Khi cần đối soát phiếu đã bị ảnh hưởng:
+
+```sql
+SELECT h.So_Ct, h.TTien_Nt2,
+       SUM(d.Tien_Nt2) AS SumThanhToan,
+       SUM(d.Tien_Nt9) AS SumThanhTien,
+       SUM(d.Tien_Nt4) AS SumCK
+FROM CtBH h
+JOIN CtBH0 d ON d.Stt = h.Stt
+WHERE RTRIM(h.So_Ct) = '<SO_CT>'
+GROUP BY h.So_Ct, h.TTien_Nt2;
+```
+
+Nếu `h.TTien_Nt2 = SUM(d.Tien_Nt9)` nhưng khác `SUM(d.Tien_Nt2)`, cần cập nhật lại header theo tổng thanh toán:
+
+```text
+TTien_Nt2 = SUM(CtBH0.Tien_Nt2)
+TTien2    = SUM(CtBH0.Tien2)
+TTien_Nt4 = SUM(CtBH0.Tien_Nt4)
+TTien4    = SUM(CtBH0.Tien4)
+TTien_Nt0 = TTien_Nt2 + TTien_Nt3
+TTien0    = TTien2 + TTien3
+```

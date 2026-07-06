@@ -1,3 +1,149 @@
+# [CẦN KIỂM TRA] Audit tính toán/lưu dữ liệu trong `ctbhd.scx`
+
+Ngày ghi chú: 2026-07-06.
+
+Trạng thái: Chưa xử lý hết, chỉ mới sửa lỗi tổng tiền in ra bị lấy tổng cột `Thành tiền` thay vì cột `Thanh toán`.
+
+## 1. Bối cảnh
+
+Đã so sánh `FRM\ctbhd.SCX/SCT` hiện tại với bản cũ trong `Old ctbhd\ctbhd.SCX/SCT`.
+
+Kết quả tổng quan:
+
+- Không thấy thay đổi `PROPERTIES`/binding control đáng chú ý.
+- Khác biệt nằm ở `METHODS` của 10 object.
+- Các thay đổi có khả năng ảnh hưởng tính toán/lưu dữ liệu nằm ở các `RECNO`: `22`, `24`, `30`, `32`, `34`, `42`, `44`, `46`, `59`.
+
+## 2. Đã sửa ngay
+
+Lỗi tổng tiền trên phiếu in:
+
+- Nguyên nhân: block mới trong `RECNO 46` và `RECNO 59` từng tính `TTien_Nt2/TTien2` bằng `SUM(Tien_Nt9/Tien9)`, làm tổng in ra thành tổng cột `Thành tiền` trước chiết khấu.
+- Đã sửa: đổi sang `SUM(Tien_Nt2/Tien2)`.
+- Đồng bộ thêm: `TTien_Nt0 = TTien_Nt2 + TTien_Nt3`, `TTien0 = TTien2 + TTien3` để không trừ chiết khấu lần hai.
+- Đã compile lại form `FRM\ctbhd.scx`.
+
+Cần lưu ý: các phiếu đã lưu bằng bản lỗi có thể đã bị ghi sai header trong database (`CtBH.TTien_Nt2`). Quay về phần mềm cũ vẫn in sai nếu dữ liệu header đã sai. Khi cần đối soát, so sánh:
+
+```sql
+SELECT h.So_Ct, h.TTien_Nt2,
+       SUM(d.Tien_Nt2) AS SumThanhToan,
+       SUM(d.Tien_Nt9) AS SumThanhTien,
+       SUM(d.Tien_Nt4) AS SumCK
+FROM CtBH h
+JOIN CtBH0 d ON d.Stt = h.Stt
+WHERE RTRIM(h.So_Ct) = '<SO_CT>'
+GROUP BY h.So_Ct, h.TTien_Nt2;
+```
+
+## 3. Rủi ro cần kiểm tra sau
+
+### 3.1. Workaround cộng tạm `1,000,000` vào `Tien_Nt9`
+
+Xuất hiện trong các `RECNO`: `22`, `24`, `30`, `32`, `34`, `42`, `44`.
+
+Mẫu code:
+
+```foxpro
+REPLACE Tien_Nt9 WITH K_CtTemp.Tien_Nt9 + 1000000 IN K_CtTemp
+=So_Luong2(THISFORM)
+* hoặc
+=So_Luong3(THISFORM)
+```
+
+Mục đích ban đầu: ép hàm gốc `So_Luong2/3` vượt ngưỡng bỏ qua sai số nhỏ để tính lại `Tien_Nt9`.
+
+Rủi ro: nếu `So_Luong2/3` lỗi, return sớm, hoặc không ghi đè lại `Tien_Nt9` như kỳ vọng, dữ liệu chi tiết có thể bị lưu với `Tien_Nt9` tăng thêm 1,000,000.
+
+Hướng kiểm tra:
+
+- Tạo phiếu test thay đổi `Gia_Nt9`, `So_Luong9`, `So_Luong8`, `So_Tam` với vật tư loại 2/3.
+- Sau khi rời ô và trước/sau lưu, kiểm tra `Tien_Nt9` có bằng `Gia_Nt9 * So_Luong9` không.
+- Nên cân nhắc thêm guard trước `Save_Ct()` để chặn các dòng có `Tien_Nt9` lệch bất thường.
+
+### 3.2. Block dọn chiết khấu bằng 0 có thể ghi đè `Tien_Nt2`
+
+Xuất hiện trong:
+
+- `RECNO 46`: cột CK `LostFocus`.
+- `RECNO 59`: nút Lưu trước `Save_Ct()`.
+
+Mẫu code đang cần theo dõi:
+
+```foxpro
+IF Chiet_Khau = 0 AND (Tien_Nt4 <> 0 OR Tien4 <> 0 OR Tien_Nt2 <> Tien_Nt9 OR Tien2 <> Tien9)
+    REPLACE Tien_Nt4 WITH 0, ;
+            Tien4 WITH 0, ;
+            Tien_Nt2 WITH Tien_Nt9, ;
+            Tien2 WITH Tien9
+ENDIF
+```
+
+Mục đích ban đầu: xóa "chiết khấu ẩn" khi CK đã về 0.
+
+Rủi ro: nếu có nghiệp vụ hợp lệ mà `Chiet_Khau = 0` nhưng `Tien_Nt2 <> Tien_Nt9` vì lý do khác, block này sẽ ép mất chênh lệch.
+
+Hướng kiểm tra:
+
+- Xác định trong hệ thống `Tien_Nt2` có luôn là thanh toán sau CK không.
+- Kiểm tra các trường hợp khuyến mãi/gia đặc biệt/làm tròn thuế/ngoại tệ.
+- Nếu chỉ "chiết khấu ẩn" mới tạo chênh lệch này thì block chấp nhận được; nếu không, cần thu hẹp điều kiện.
+
+### 3.3. Phụ thuộc `SO_Price_Fix.FXP`
+
+Xuất hiện trong `RECNO 22`, `RECNO 24`:
+
+```foxpro
+SET PROCEDURE TO SO_Price_Fix ADDITIVE
+_Gia = CheckPriceExpiry(...)
+_CK = CheckDiscountExpiry(...)
+```
+
+Rủi ro:
+
+- File `so_price_fix.FXP` phải đi kèm khi deploy.
+- Hiện chỉ thấy FXP, không thấy PRG nguồn để audit logic.
+- Nếu FXP thiếu hoặc trả về giá/CK sai, dữ liệu đơn giá/chiết khấu sẽ sai ngay khi chọn hàng.
+
+Hướng kiểm tra:
+
+- Tìm/lưu lại source `SO_Price_Fix.PRG` nếu còn.
+- Test khi FXP bị thiếu để biết form lỗi ra sao.
+- Đối chiếu giá/CK trả về với bảng giá thực tế, đặc biệt quanh ngày hết hiệu lực.
+
+### 3.4. Đổi ngày kiểm tra công nợ sang `DATE()`
+
+Xuất hiện trong `txtMa_Dt.LostFocus` và nút Lưu.
+
+Thay đổi:
+
+```foxpro
+tdDate = DATE()
+```
+
+thay cho:
+
+```foxpro
+tdDate = K_PhTemp1.Ngay_Ct
+```
+
+Rủi ro: không trực tiếp làm sai tiền/hàng, nhưng thay đổi nghiệp vụ chặn lưu/cảnh báo công nợ khi sửa chứng từ cũ.
+
+Hướng kiểm tra:
+
+- Xác nhận yêu cầu nghiệp vụ: công nợ để cảnh báo/chặn lưu phải tính tại ngày hiện tại hay ngày chứng từ.
+- Test sửa phiếu cũ khi công nợ hiện tại và công nợ tại ngày chứng từ khác nhau.
+
+## 4. Checklist khi có thời gian
+
+1. Audit lại các block `Tien_Nt9 + 1000000`; ưu tiên thay bằng cách tính lại an toàn hơn hoặc thêm guard trước lưu.
+2. Audit nghĩa dữ liệu của `Tien_Nt2`/`Tien_Nt9` trong tất cả mẫu in và bảng `CtBH0`.
+3. Đối soát các phiếu đã lưu trong giai đoạn bản lỗi: header `CtBH.TTien_Nt2` so với `SUM(CtBH0.Tien_Nt2)`.
+4. Tìm source `SO_Price_Fix.PRG` hoặc ghi lại checksum/nguồn gốc của `so_price_fix.FXP`.
+5. Lập bộ phiếu test: CK %, CK = 0, khuyến mãi giá 1/2 đồng, vật tư loại 2/3, sửa phiếu cũ, Ctrl+Enter lưu nhanh.
+
+---
+
 # [HOÀN TẤT] Quá Trình Gỡ Lỗi: "Execution error from ADODataCommand" khi lưu phiếu
 
 ## 0. Trạng thái hoàn tất
