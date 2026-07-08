@@ -504,3 +504,64 @@ TTien4    = SUM(CtBH0.Tien4)
 TTien_Nt0 = TTien_Nt2 + TTien_Nt3
 TTien0    = TTien2 + TTien3
 ```
+
+## 11. Hướng Dẫn Tối Ưu Tốc Độ Lookup Báo Cáo (Chống Giật Lag & Lỗi Not Found)
+
+### Hiện Tượng Thường Gặp Ở Các Form Báo Cáo
+
+Khác với form chứng từ (đã preload sẵn các danh mục vào RAM), các form điều kiện báo cáo (như `kct04.scx`) thường không preload danh mục (ví dụ `DmDt` - Khách hàng, `DmVt` - Vật tư). Hậu quả là khi người dùng gõ từng ký tự vào ô tìm kiếm, framework lookup (`KTV.VCT`) phải liên tục gửi câu lệnh SQL động (`SELECT * FROM...`) lên server để tạo dropdown. Điều này gây ra độ trễ lớn, giao diện bị giật/treo ngắn.
+
+Ngoài ra, nếu cố gắng tự fix bằng cách viết đè thuộc tính hoặc tạo index thủ công, thường sẽ vướng phải các lỗi:
+1. **Lỗi hiển thị TCVN3**: Chữ có dấu bị biến dạng khi ép hoa.
+2. **Lỗi "Không tìm thấy" (Mã khách không hợp lệ)**: Dù chọn đúng mã từ dropdown nhưng phần mềm vẫn báo lỗi do xung đột khoảng trắng (padding).
+3. **Lỗi "Object OCURSORDMDT is not found" hoặc "Alias is not found"**: Do xung đột biến toàn cục (cross-contamination) khi drill-down từ báo cáo sang chứng từ.
+
+### Giải Pháp Tối Ưu Chuẩn (Dùng Cho Mọi Form Tương Tự Trong Tương Lai)
+
+Để giải quyết triệt để tốc độ và tính chính xác cho các lookup dạng này, hãy áp dụng đúng công thức sau:
+
+#### Bước 1: Preload Cursor Bằng Thuộc Tính Cục Bộ (`THIS.AddProperty`)
+
+Trong method `Init` của form báo cáo, thêm đoạn code sau để tải trước toàn bộ danh mục vào bộ nhớ cục bộ của form. (Ví dụ dưới đây áp dụng cho danh mục khách hàng `DmDt`):
+
+```foxpro
+PROCEDURE Init
+DODEFAULT()
+
+* 1. Khai báo thuộc tính cục bộ để tránh đụng độ (cross-contamination) với form khác
+IF TYPE('THIS.oCursorDmDt') = 'U'
+   THIS.AddProperty('oCursorDmDt')
+ENDIF
+
+* 2. Gọi Stored Procedure chuẩn để nạp dữ liệu
+IF NOT USED('M_DmDt') OR TYPE('THIS.oCursorDmDt') <> 'O'
+   TRY
+      * LƯU Ý: Phải truyền ĐỦ tham số, đặc biệt là @p_UserName để không bị sót dữ liệu phân quyền
+      THIS.oCursorDmDt = CREATEOBJECT('ADOCursorSys', 'M_DmDt', [EXECUTE DmDt_Get @p_Ma_Dt = '', @p_Ma_Nh_Dt = '', @p_UserName = ?M_Name])
+   CATCH
+   ENDTRY
+ENDIF
+ENDPROC
+```
+
+*Lưu ý quan trọng về Scope:* Tuyệt đối không dùng `PUBLIC oCursorDmDt`. Nếu dùng `PUBLIC`, khi người dùng từ báo cáo bấm mở chi tiết một phiếu chứng từ, form chứng từ sẽ ghi đè lên biến `PUBLIC` này, làm object cũ bị hủy và tự động đóng mất cursor `M_DmDt` của form báo cáo. Điều này gây lỗi văng form khi thoát chứng từ quay lại báo cáo.
+
+#### Bước 2: TUYỆT ĐỐI KHÔNG TẠO INDEX THỦ CÔNG
+
+Nhiều lập trình viên có thói quen chèn thêm `INDEX ON Ma_Dt TAG Ma_Dt` ngay sau khi `CREATEOBJECT` để tăng tốc tìm kiếm. **ĐÂY LÀ SAI LẦM NGHIÊM TRỌNG TRÊN FORM BÁO CÁO.**
+
+- Các form báo cáo luôn chạy ngầm lệnh `SET EXACT ON` để chốt tham số chính xác.
+- Khi có Index, framework sẽ dùng lệnh `SEEK`. VFP sẽ so sánh nghiêm ngặt cả khoảng trắng thừa của field `CHAR(20)`. Nếu mã gõ vào chỉ có 8 ký tự, lệnh `SEEK` sẽ thất bại -> Gây ra lỗi "Không tìm thấy" dù mã có trong danh sách.
+- **Cách đúng:** Không tạo Index. Khi không có Index, framework sẽ tự fallback sang dùng lệnh `LOCATE FOR`. Lệnh `LOCATE` tự động triệt tiêu khoảng trắng thừa, hoạt động hoàn hảo dưới môi trường `SET EXACT ON`. Tốc độ `LOCATE` trên vài ngàn dòng RAM vẫn là tức thời (<1ms).
+
+#### Bước 3: Dọn Dẹp Các Thuộc Tính Thừa Trên Control Textbox
+
+Để framework hoạt động chuẩn xác theo cấu hình metadata của `ST_File`:
+1. **Xóa `Format = "!"`**: Cài đặt này ép chữ hoa bằng cơ chế ANSI của VFP, làm hỏng các ký tự có dấu của bảng mã TCVN3 (ví dụ `Trường` thành `TRASNG`). Việc tìm kiếm case-insensitive đã được framework tự xử lý.
+2. **Xóa các thiết lập filter thủ công**: Xóa hết các giá trị ở `_fieldlist`, `_filterfieldlist`, `_filtertype`, `_startpos`. Chỉ cần giữ lại các giá trị cơ bản:
+```foxpro
+ControlSource = "M.Ma_Dt"
+InputMask = (P16)
+_tablename = DmDt
+Name = "txtMa_dt"
+```

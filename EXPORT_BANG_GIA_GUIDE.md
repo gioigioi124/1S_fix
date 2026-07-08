@@ -422,21 +422,25 @@ Mã đã chèn vào `frmKct04.Init`:
 ```foxpro
 PROCEDURE Init
 DODEFAULT()
-IF NOT USED([M_DmDt])
+IF TYPE('oCursorDmDt') = 'U'
+   PUBLIC oCursorDmDt
+ENDIF
+IF NOT USED('M_DmDt') OR TYPE('oCursorDmDt') <> 'O'
    TRY
-      IF TYPE([THIS.oCursorDmDt]) = [U]
-         THIS.AddProperty([oCursorDmDt], .NULL.)
-      ENDIF
-      THIS.oCursorDmDt = CREATEOBJECT([ADOCursorSys], [M_DmDt], [EXECUTE DmDt_Get])
-      IF USED([M_DmDt])
-         SELECT M_DmDt
-         INDEX ON Ma_Dt TAG Ma_Dt
-      ENDIF
+      THIS.oCursorDmDt = CREATEOBJECT('ADOCursorSys', 'M_DmDt', [EXECUTE DmDt_Get @p_Ma_Dt = '', @p_Ma_Nh_Dt = '', @p_UserName = ?M_Name])
    CATCH
    ENDTRY
 ENDIF
 ENDPROC
 ```
+
+*Lưu ý 1 (Khắc phục lỗi cross-contamination khi mở chứng từ):* Trong một số thử nghiệm trước, biến `oCursorDmDt` từng được khai báo là `PUBLIC` để tránh lỗi "Object OCURSORDMDT is not found" của framework. Tuy nhiên, khai báo `PUBLIC` là sai lầm vì nó gây ra hiệu ứng phụ nghiêm trọng: Khi người dùng đang ở báo cáo công nợ `kct04` và drill-down vào xem một chứng từ (ví dụ `ctbhd`), form chứng từ sẽ vô tình ghi đè lên biến global `PUBLIC oCursorDmDt`. Việc ghi đè này làm object cũ của form `kct04` bị hủy (garbage collected), kéo theo lệnh tự động đóng cursor `M_DmDt` của form `kct04` (`USE IN M_DmDt`). Hậu quả là form chứng từ báo lỗi `Error! EXECUTE DmDt_Get` và khi đóng form chứng từ để quay lại báo cáo sẽ bị văng lỗi `Alias 'M_DMDT' is not found`. 
+Giải pháp chuẩn xác là luôn dùng thuộc tính cục bộ của form (`THIS.AddProperty('oCursorDmDt')`). Lỗi "Object OCURSORDMDT is not found" ban đầu thực chất chỉ là hệ quả (fallback crash) khi quá trình tìm kiếm thất bại do thiếu tham số và xung đột index (đã được xử lý triệt để ở Lưu ý 2). Khi dữ liệu tìm kiếm luôn thành công, framework sẽ không bao giờ kích hoạt fallback sinh lỗi đó nữa.
+
+*Lưu ý 2 (Bug fix "Không tìm thấy mã dù có trong dropdown"):*
+Có 2 nguyên nhân cốt lõi dẫn đến tình trạng gõ mã hoặc tên thì dropdown hiện đúng, nhưng chọn xong thì báo lỗi "không tìm thấy":
+1. **Thiếu tham số phân quyền:** Lệnh `EXECUTE DmDt_Get` cũ bị thiếu `@p_UserName`, khiến một số khách hàng không được tải vào bộ nhớ đệm `M_DmDt`. Giải pháp: đổi thành `[EXECUTE DmDt_Get @p_Ma_Dt = '', @p_Ma_Nh_Dt = '', @p_UserName = ?M_Name]`.
+2. **Xung đột INDEX và SET EXACT ON:** Ban đầu chúng ta cố tình tạo `INDEX ON Ma_Dt TAG Ma_Dt`. Tuy nhiên, kct04 là form báo cáo nên luôn chạy dưới môi trường `SET EXACT ON`. Khi hàm lookup framework (`SEEKSQL`) sử dụng `SEEK` trên index này, VFP so sánh chính xác theo toàn bộ độ dài của field `CHAR(20)`. Nếu mã nhập vào không có khoảng trắng padding ở đuôi, hàm `SEEK` sẽ thất bại (trả về false). Giải pháp: **Bỏ dòng tạo INDEX**. Khi không có index, framework sẽ fallback sang lệnh `LOCATE`, lệnh này xử lý string matching chuẩn xác hơn, bỏ qua lỗi padding/khoảng trắng dư thừa.
 
 Đồng thời, `txtMa_dt` được giữ ở trạng thái tối thiểu:
 
