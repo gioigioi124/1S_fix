@@ -565,3 +565,33 @@ InputMask = (P16)
 _tablename = DmDt
 Name = "txtMa_dt"
 ```
+
+## 12. Thêm Hotkey (F11) Bật/Tắt In Giá Trực Tiếp Trên Form Chứng Từ
+
+### Hiện Tượng Cần Giải Quyết
+Người dùng muốn thay đổi tuỳ chọn "In giá" hay "Không in giá" (thường là một checkbox hoặc textbox nhận giá trị 0/1) bằng một phím tắt (VD: F11) một cách tiện lợi, thay vì phải dùng chuột click. Tuy nhiên, việc tự thêm code phím tắt vào form thường xuyên vướng phải lỗi `Command contains unrecognized phrase/keyword` hoặc `No PARAMETER statement is found`.
+
+### Nguyên Nhân Lỗi Khi Can Thiệp
+1. **Lỗi `Command contains unrecognized phrase/keyword`:** Do VFP (đặc biệt là bản 8.0 trở xuống) không hỗ trợ tốt Unicode UTF-8 trên editor. Nếu copy code có chứa tiếng Việt có dấu (ví dụ comment có tiếng Việt) dán vào Form Designer, chuỗi tiếng Việt bị lỗi font sẽ làm compiler của FoxPro không nhận diện được cú pháp.
+2. **Lỗi `No PARAMETER statement is found`:** Xảy ra khi dùng script tự động chèn code vào trường `methods` của file SCX mà vô tình tạo ra một dòng trống (khoảng trắng/newline) ở **ngay dòng đầu tiên** của memo field (trước từ khóa `PROCEDURE` đầu tiên). FoxPro sẽ tự động ngầm gán đoạn trống đó thành method mặc định (`Init`), đè mất method `Init` gốc có chứa các tham số truyền vào, làm ứng dụng văng lỗi khi mở form lên.
+
+### Giải Pháp Tối Ưu (Thực Hành Chuẩn)
+Chèn mã xử lý phím tắt vào sự kiện `KeyPress` của cấp Form (như `frmdocitemh` trong `ctbhh.scx`). Mã này phải tuân thủ nghiêm ngặt hai điều kiện:
+- Tuyệt đối không dùng tiếng Việt có dấu trong code (kể cả phần comment) nếu phải copy-paste thủ công.
+- Tận dụng `VARTYPE` để kiểm tra an toàn kiểu dữ liệu trước khi thay đổi, tránh văng lỗi nếu Control chưa kịp nạp.
+
+Đoạn code chuẩn (English Only) chèn vào cuối `PROCEDURE KeyPress` (vào trong khối `DO CASE` hoặc cấu trúc IF nếu có):
+
+```foxpro
+	CASE nKeyCode = 133
+		NODEFAULT
+		IF VARTYPE(THISFORM.txtinGia.Value) = 'C'
+			THISFORM.txtinGia.Value = IIF(THISFORM.txtinGia.Value = '1', '0', '1')
+		ENDIF
+		IF VARTYPE(THISFORM.txtinGia.Value) = 'N'
+			THISFORM.txtinGia.Value = IIF(THISFORM.txtinGia.Value = 1, 0, 1)
+		ENDIF
+		THISFORM.txtinGia.Refresh()
+```
+
+*Lưu ý: Nếu form không dùng cấu trúc DO CASE mà dùng IF cho KeyPress, chỉ cần đổi `CASE` thành `IF ... ENDIF` nhưng phải đảm bảo lệnh `DODEFAULT(nKeyCode, nShiftAltCtrl)` gốc của hệ thống vẫn được gọi ở cuối hàm để không làm mất các phím tắt khác.*
