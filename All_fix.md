@@ -505,7 +505,7 @@ TTien_Nt0 = TTien_Nt2 + TTien_Nt3
 TTien0    = TTien2 + TTien3
 ```
 
-## 11. Hướng Dẫn Tối Ưu Tốc Độ Lookup Báo Cáo (Chống Giật Lag & Lỗi Not Found)
+## 11. Hướng Dẫn Tối Ưu Tốc Độ Lookup Báo Cáo (Chống Giật Lag, Lỗi Không Tìm Thấy & Object Not Found)
 
 ### Hiện Tượng Thường Gặp Ở Các Form Báo Cáo
 
@@ -565,6 +565,50 @@ InputMask = (P16)
 _tablename = DmDt
 Name = "txtMa_dt"
 ```
+
+#### Bước 4: Khai Báo Biến PRIVATE Cho oCursor Khi Xảy Ra Lỗi Tìm Kiếm Thất Bại (Chặn Lỗi Object Not Found)
+
+- **Lỗi phát sinh khi tìm kiếm thất bại:** 
+  Khi người dùng nhập một mã khách hàng không tồn tại trong cơ sở dữ liệu rồi nhấn `Enter` hoặc chuyển focus, hệ thống ném ra lỗi của chương trình: `Object OCURSORDMDT is not found.` thay vì hiển thị form nhóm khách hàng để chọn.
+  
+- **Nguyên nhân:** 
+  Khi danh mục đã được preload vào form (`USED('M_DmDt') = .T.`), framework lookup (`assign_value` của `KTV.VCX`) nhảy vào nhánh `ELSE` của logic nạp dữ liệu và kiểm tra:
+  ```foxpro
+  IF TYPE('oCursorDmDt') = 'O' AND oCursorDmDt.BaseClass = 'Cursoradapter'
+  ```
+  Vì `oCursorDmDt` được lưu ở dạng thuộc tính của form (`THISFORM.oCursorDmDt`), hàm `TYPE('oCursorDmDt')` đánh giá theo ngữ cảnh form và trả về `'O'`, nhưng biểu thức `oCursorDmDt.BaseClass` lại cố tìm kiếm biến cục bộ/toàn cục `oCursorDmDt` và thất bại, ném ra lỗi `Object not found`.
+
+- **Giải pháp:** 
+  Khai báo biến `PRIVATE oCursorDmDt` trong các sự kiện nhập liệu (`Valid` và `LostFocus` của `txtMa_dt`), gán giá trị bằng `THISFORM.oCursorDmDt` trước khi gọi `DODEFAULT()`. Sự kế thừa phạm vi động (dynamic scoping) của FoxPro giúp truyền tham chiếu biến này xuống các cấp hàm con một cách an toàn và tự động dọn dẹp biến khi hoàn thành.
+  
+  Mã chèn vào sự kiện của `txtMa_dt`:
+  ```foxpro
+  PROCEDURE Valid
+  PRIVATE oCursorDmDt
+  IF TYPE('THISFORM.oCursorDmDt') = 'O'
+     oCursorDmDt = THISFORM.oCursorDmDt
+  ENDIF
+  RETURN DODEFAULT()
+  ENDPROC
+
+  PROCEDURE LostFocus
+  DODEFAULT()
+  PRIVATE oCursorDmDt
+  IF TYPE('THISFORM.oCursorDmDt') = 'O'
+     oCursorDmDt = THISFORM.oCursorDmDt
+  ENDIF
+  THISFORM.LookUpControl1.Assign_Value([K], [DmDt], [M_DmDt], [], [Ma_Dt], [Ten_Dt], [M.Ma_Dt], [M.Ten_Dt],[])
+  ENDPROC
+
+  PROCEDURE When
+  RETURN EMPTY(m.Ma_Nh_Dt)
+  ENDPROC
+  ```
+  Sau đó biên dịch lại form bằng `COMPILE FORM e:\1S2024\FRM\kct04.scx`.
+
+- **Nguyên tắc áp dụng cho các báo cáo khác:** 
+  Khi tối ưu hóa tốc độ tìm kiếm cho bất cứ textbox/dialog báo cáo nào bằng cách preload danh mục (ví dụ Vật tư `M_DmVt` -> `oCursorDmVt`, Tài khoản `M_DmTk` -> `oCursorDmTk`, v.v.), nếu xảy ra lỗi `Object OCURSORDM... is not found` khi tìm kiếm thất bại, hãy áp dụng đúng công thức khai báo biến `PRIVATE` tương ứng trỏ tới thuộc tính form ngay tại sự kiện `Valid` và `LostFocus` của textbox nhập liệu.
+
 
 ## 12. Thêm Hotkey (F11) Bật/Tắt In Giá Trực Tiếp Trên Form Chứng Từ
 
