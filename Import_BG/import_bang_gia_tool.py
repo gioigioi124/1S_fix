@@ -301,11 +301,15 @@ class App(tk.Tk):
         self.entry_from = tk.Entry(frame_search, width=12)
         self.entry_from.insert(0, first_day.strftime("%d/%m/%Y"))
         self.entry_from.pack(side="left", padx=5)
+        self.entry_from.bind("<FocusOut>", self.on_date_focusout)
+        self.entry_from.bind("<Return>", self.on_date_focusout)
         
         tk.Label(frame_search, text="Đến ngày:").pack(side="left", padx=5)
         self.entry_to = tk.Entry(frame_search, width=12)
         self.entry_to.insert(0, today.strftime("%d/%m/%Y"))
         self.entry_to.pack(side="left", padx=5)
+        self.entry_to.bind("<FocusOut>", self.on_date_focusout)
+        self.entry_to.bind("<Return>", self.on_date_focusout)
         
         btn_search = tk.Button(frame_search, text="Tìm Kiếm", command=self.on_search)
         btn_search.pack(side="left", padx=10)
@@ -328,8 +332,11 @@ class App(tk.Tk):
         
         self.tree.pack(fill="both", expand=True, padx=10, pady=5)
         
+        lbl_hint = tk.Label(self.tab_update, text="* Gợi ý: Giữ phím Ctrl hoặc Shift click chuột để chọn nhiều bảng giá cùng lúc.\n* Lưu ý: Trước khi update hãy LƯU (Save) file Excel (bạn không cần phải thoát hẳn file).", fg="#555", justify="left")
+        lbl_hint.pack(fill="x", padx=10, pady=(0, 5))
+        
         frame_file = tk.Frame(self.tab_update)
-        frame_file.pack(fill="x", padx=10, pady=10)
+        frame_file.pack(fill="x", padx=10, pady=5)
         
         tk.Label(frame_file, text="File Excel:").pack(side="left")
         self.entry_file_update = tk.Entry(frame_file, width=40)
@@ -360,15 +367,47 @@ class App(tk.Tk):
             return
         import_excel_new(filepath)
 
+    def normalize_date(self, date_str):
+        date_str = date_str.strip()
+        if not date_str:
+            return ""
+        parts = date_str.replace('-', '/').split('/')
+        today = datetime.date.today()
+        try:
+            if len(parts) == 2:
+                return f"{int(parts[0]):02d}/{int(parts[1]):02d}/{today.year}"
+            elif len(parts) == 3:
+                year = parts[2]
+                if len(year) == 2:
+                    year = f"20{year}"
+                return f"{int(parts[0]):02d}/{int(parts[1]):02d}/{year}"
+        except:
+            pass
+        return date_str
+
+    def on_date_focusout(self, event):
+        widget = event.widget
+        current_val = widget.get()
+        new_val = self.normalize_date(current_val)
+        if new_val != current_val:
+            widget.delete(0, tk.END)
+            widget.insert(0, new_val)
+
     def on_search(self):
-        from_d = self.entry_from.get().strip()
-        to_d = self.entry_to.get().strip()
+        from_d = self.normalize_date(self.entry_from.get())
+        to_d = self.normalize_date(self.entry_to.get())
+        
+        # Cập nhật lại UI cho trực quan
+        self.entry_from.delete(0, tk.END)
+        self.entry_from.insert(0, from_d)
+        self.entry_to.delete(0, tk.END)
+        self.entry_to.insert(0, to_d)
         
         try:
             from_date_sql = datetime.datetime.strptime(from_d, "%d/%m/%Y").strftime("%Y-%m-%d")
             to_date_sql = datetime.datetime.strptime(to_d, "%d/%m/%Y").strftime("%Y-%m-%d")
         except ValueError:
-            messagebox.showwarning("Cảnh báo", "Ngày không hợp lệ. Vui lòng nhập định dạng DD/MM/YYYY")
+            messagebox.showwarning("Cảnh báo", "Ngày không hợp lệ. Vui lòng nhập định dạng DD/MM/YYYY (ví dụ: 1/4 hoặc 01/04/2026)")
             return
             
         for item in self.tree.get_children():

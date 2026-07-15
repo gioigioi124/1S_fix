@@ -19,4 +19,5 @@ node_modules/
 !frm/ctbhh.scx
 !frm/ctbhh.sct
 !Import_BG/import_bang_gia_tool.py
-!Import_BG/run_import.bat
+!Import_BG/cai_dat_thu_vien.bat
+!Import_BG/chay_phan_mem.vbs
