@@ -86,33 +86,49 @@ def import_excel_update(filepath, selected_stt_list):
         row = cursor.fetchone()
         ma_dvcs = row[0].strip() if row else '01'
         
-        success_details = 0
+        success_inserts = 0
+        success_updates = 0
         try:
             for stt in selected_stt_list:
                 for _, detail_row in df.iterrows():
-                    cursor.execute(f"""
-                        SET NOCOUNT ON;
-                        DECLARE @p_Stt char(20) = '';
-                        EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@p_Stt OUTPUT;
-                        SELECT @p_Stt AS Stt;
-                    """)
-                    row0 = cursor.fetchone()
-                    if not row0 or not row0.Stt:
-                        raise Exception("Không thể tạo số thứ tự Stt0.")
-                    stt0 = row0.Stt
-                    
                     ma_vt = detail_row['Ma_Vt']
                     gia = detail_row['Gia']
                     ck = detail_row['CK']
                     
-                    sql_d = """
-                        INSERT INTO dbo.BG0 (Stt0, Stt, Ma_Vt, Dvt, Gia, CK)
-                        VALUES (?, ?, ?, ISNULL((SELECT TOP 1 Dvt FROM VTSYS.dbo.DmVt WHERE Ma_Vt = ?), ''), ?, ?)
-                    """
-                    cursor.execute(sql_d, (stt0, stt, ma_vt, ma_vt, gia, ck))
-                    success_details += 1
+                    # Kiểm tra xem mặt hàng đã tồn tại trong bảng giá này chưa
+                    cursor.execute("SELECT 1 FROM dbo.BG0 WHERE Stt = ? AND Ma_Vt = ?", (stt, ma_vt))
+                    exists = cursor.fetchone()
+                    
+                    if exists:
+                        # Nếu đã có -> Update (Ghi đè giá và CK)
+                        sql_u = "UPDATE dbo.BG0 SET Gia = ?, CK = ? WHERE Stt = ? AND Ma_Vt = ?"
+                        cursor.execute(sql_u, (gia, ck, stt, ma_vt))
+                        success_updates += 1
+                    else:
+                        # Nếu chưa có -> Lấy Stt0 mới và Insert
+                        cursor.execute(f"""
+                            SET NOCOUNT ON;
+                            DECLARE @p_Stt char(20) = '';
+                            EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@p_Stt OUTPUT;
+                            SELECT @p_Stt AS Stt;
+                        """)
+                        row0 = cursor.fetchone()
+                        if not row0 or not row0.Stt:
+                            raise Exception("Không thể tạo số thứ tự Stt0.")
+                        stt0 = row0.Stt
+                        
+                        sql_d = """
+                            INSERT INTO dbo.BG0 (Stt0, Stt, Ma_Vt, Dvt, Gia, CK)
+                            VALUES (?, ?, ?, ISNULL((SELECT TOP 1 Dvt FROM VTSYS.dbo.DmVt WHERE Ma_Vt = ?), ''), ?, ?)
+                        """
+                        cursor.execute(sql_d, (stt0, stt, ma_vt, ma_vt, gia, ck))
+                        success_inserts += 1
+                        
             conn.commit()
-            messagebox.showinfo("Thành công", f"Cập nhật hoàn tất!\nĐã thêm {success_details} dòng chi tiết vào {len(selected_stt_list)} bảng giá.")
+            msg = f"Cập nhật hoàn tất cho {len(selected_stt_list)} bảng giá!\n\n"
+            msg += f"- Thêm mới: {success_inserts} mặt hàng\n"
+            msg += f"- Ghi đè giá: {success_updates} mặt hàng"
+            messagebox.showinfo("Thành công", msg)
         except Exception as e:
             conn.rollback()
             messagebox.showerror("Lỗi Database", f"Có lỗi xảy ra:\n{str(e)}\n\nĐã thu hồi (rollback).")
