@@ -86,26 +86,43 @@ def import_excel_update(filepath, selected_stt_list):
         row = cursor.fetchone()
         ma_dvcs = row[0].strip() if row else '01'
         
+        # Bật tính năng fast_executemany của pyodbc để tối đa hóa tốc độ cập nhật hàng loạt
+        try:
+            cursor.fast_executemany = True
+        except:
+            pass
+        
         success_inserts = 0
         success_updates = 0
         try:
             for stt in selected_stt_list:
+                # 1. Tải toàn bộ danh sách mặt hàng đã có của bảng giá này về RAM (chỉ tốn 1 lần query/bảng giá)
+                cursor.execute("SELECT Ma_Vt FROM dbo.BG0 WHERE Stt = ?", (stt,))
+                existing_items = set(r[0].strip() for r in cursor.fetchall())
+                
+                update_list = []
+                insert_list = []
+                
+                # 2. Phân loại danh sách (Update hoặc Insert) trên RAM (rất nhanh)
                 for _, detail_row in df.iterrows():
                     ma_vt = detail_row['Ma_Vt']
                     gia = detail_row['Gia']
                     ck = detail_row['CK']
                     
-                    # Kiểm tra xem mặt hàng đã tồn tại trong bảng giá này chưa
-                    cursor.execute("SELECT 1 FROM dbo.BG0 WHERE Stt = ? AND Ma_Vt = ?", (stt, ma_vt))
-                    exists = cursor.fetchone()
-                    
-                    if exists:
-                        # Nếu đã có -> Update (Ghi đè giá và CK)
-                        sql_u = "UPDATE dbo.BG0 SET Gia = ?, CK = ? WHERE Stt = ? AND Ma_Vt = ?"
-                        cursor.execute(sql_u, (gia, ck, stt, ma_vt))
-                        success_updates += 1
+                    if ma_vt in existing_items:
+                        update_list.append((gia, ck, stt, ma_vt))
                     else:
-                        # Nếu chưa có -> Lấy Stt0 mới và Insert
+                        insert_list.append((ma_vt, gia, ck))
+                        
+                # 3. Gửi 1 LỆNH DUY NHẤT để update tất cả các mặt hàng cũ (Batch Update)
+                if update_list:
+                    sql_u = "UPDATE dbo.BG0 SET Gia = ?, CK = ? WHERE Stt = ? AND Ma_Vt = ?"
+                    cursor.executemany(sql_u, update_list)
+                    success_updates += len(update_list)
+                    
+                # 4. Thêm mới các mặt hàng chưa từng tồn tại (Vẫn sinh Stt0 tuần tự nhưng số lượng thường ít)
+                if insert_list:
+                    for ma_vt, gia, ck in insert_list:
                         cursor.execute(f"""
                             SET NOCOUNT ON;
                             DECLARE @p_Stt char(20) = '';
