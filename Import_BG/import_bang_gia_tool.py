@@ -387,6 +387,22 @@ class App(tk.Tk):
         lbl_hint = tk.Label(self.tab_update, text="* Gợi ý: Giữ phím Ctrl hoặc Shift click chuột để chọn nhiều bảng giá cùng lúc.\n* Lưu ý: Trước khi update hãy LƯU (Save) file Excel (bạn không cần phải thoát hẳn file).", fg="#555", justify="left")
         lbl_hint.pack(fill="x", padx=10, pady=(0, 5))
         
+        frame_actions = tk.Frame(self.tab_update)
+        frame_actions.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(frame_actions, text="Ngày mới:").pack(side="left")
+        self.entry_action_date = tk.Entry(frame_actions, width=12)
+        self.entry_action_date.insert(0, today.strftime("%d/%m/%Y"))
+        self.entry_action_date.pack(side="left", padx=5)
+        self.entry_action_date.bind("<FocusOut>", self.on_date_focusout)
+        self.entry_action_date.bind("<Return>", self.on_date_focusout)
+        
+        btn_change_date = tk.Button(frame_actions, text="Đổi Ngày", command=self.on_change_date, bg="#2196F3", fg="white", font=("Arial", 9, "bold"))
+        btn_change_date.pack(side="left", padx=5)
+        
+        btn_copy_date = tk.Button(frame_actions, text="Copy (Nhân bản)", command=self.on_copy_price_lists, bg="#9C27B0", fg="white", font=("Arial", 9, "bold"))
+        btn_copy_date.pack(side="left", padx=5)
+        
         frame_file = tk.Frame(self.tab_update)
         frame_file.pack(fill="x", padx=10, pady=5)
         
@@ -444,6 +460,133 @@ class App(tk.Tk):
         if new_val != current_val:
             widget.delete(0, tk.END)
             widget.insert(0, new_val)
+
+    def on_change_date(self):
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một bảng giá để đổi ngày.")
+            return
+            
+        date_str = self.normalize_date(self.entry_action_date.get())
+        self.entry_action_date.delete(0, tk.END)
+        self.entry_action_date.insert(0, date_str)
+        
+        try:
+            new_date_sql = datetime.datetime.strptime(date_str, "%d/%m/%Y").strftime("%Y%m%d")
+        except ValueError:
+            messagebox.showwarning("Cảnh báo", "Ngày không hợp lệ.")
+            return
+            
+        if not messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn ĐỔI NGÀY của {len(selected_items)} bảng giá đã chọn sang ngày {date_str}?\nLưu ý: Dữ liệu hiện tại sẽ bị thay đổi ngày áp dụng."):
+            return
+            
+        stt_list = [self.tree.item(item, "values")[0] for item in selected_items]
+        
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            placeholders = ','.join(['?'] * len(stt_list))
+            sql = f"UPDATE dbo.BG SET Ngay_Ct = ?, Ngay_Ct1 = ? WHERE Stt IN ({placeholders})"
+            params = [new_date_sql, new_date_sql] + stt_list
+            
+            cursor.execute(sql, params)
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("Thành công", f"Đã đổi ngày thành công cho {len(stt_list)} bảng giá!")
+            self.on_search()
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Có lỗi xảy ra:\n{str(e)}")
+
+    def on_copy_price_lists(self):
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một bảng giá để nhân bản.")
+            return
+            
+        date_str = self.normalize_date(self.entry_action_date.get())
+        self.entry_action_date.delete(0, tk.END)
+        self.entry_action_date.insert(0, date_str)
+        
+        try:
+            new_date_sql = datetime.datetime.strptime(date_str, "%d/%m/%Y").strftime("%Y%m%d")
+        except ValueError:
+            messagebox.showwarning("Cảnh báo", "Ngày không hợp lệ.")
+            return
+            
+        if not messagebox.askyesno("Xác nhận", f"Bạn có chắc chắn muốn NHÂN BẢN {len(selected_items)} bảng giá đã chọn thành các bảng giá MỚI TINH áp dụng từ ngày {date_str}?"):
+            return
+            
+        stt_list = [self.tree.item(item, "values")[0] for item in selected_items]
+        username = "ADMIN"
+        
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT TOP 1 Ma_DvCs FROM VTSYS.dbo.DmDvCs")
+            row = cursor.fetchone()
+            ma_dvcs = row[0].strip() if row else '01'
+            
+            for old_stt in stt_list:
+                # 1. Sinh mã Stt mới cho Header
+                cursor.execute(f"""
+                    SET NOCOUNT ON;
+                    DECLARE @p_Stt char(20) = '';
+                    EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@p_Stt OUTPUT;
+                    SELECT @p_Stt AS Stt;
+                """)
+                row = cursor.fetchone()
+                if not row or not row.Stt:
+                    raise Exception("Không thể tạo số thứ tự Stt.")
+                new_stt = row.Stt
+                
+                # 2. Nhân bản Header sang BG
+                sql_h = f"""
+                    INSERT INTO dbo.BG (Stt, Ma_DvCs, Ngay_Ct, So_Ct, Ma_Dt, Ma_Vm, Ma_Tte, Ty_Gia, Ngay_Ct1, Ngay_Ct2, UserName, Confirmed, Closed)
+                    SELECT ?, Ma_DvCs, ?, So_Ct, Ma_Dt, Ma_Vm, Ma_Tte, Ty_Gia, ?, Ngay_Ct2, ?, Confirmed, Closed
+                    FROM dbo.BG WHERE Stt = ?
+                """
+                cursor.execute(sql_h, (new_stt, new_date_sql, new_date_sql, username, old_stt))
+                
+                # 3. Yêu cầu SQL Server tự nhân bản chi tiết BG0 qua T-SQL Cursor nội bộ (nhanh siêu tốc)
+                sql_d = f"""
+                    SET NOCOUNT ON;
+                    DECLARE @OldStt char(20) = ?;
+                    DECLARE @NewStt char(20) = ?;
+                    DECLARE @Ma_Vt varchar(16), @Dvt nvarchar(20), @Gia numeric(18,4), @CK numeric(18,4);
+                    DECLARE @Stt0 char(20);
+                    
+                    DECLARE cur CURSOR LOCAL FAST_FORWARD FOR 
+                    SELECT Ma_Vt, Dvt, Gia, CK FROM dbo.BG0 WHERE Stt = @OldStt;
+                    
+                    OPEN cur;
+                    FETCH NEXT FROM cur INTO @Ma_Vt, @Dvt, @Gia, @CK;
+                    
+                    WHILE @@FETCH_STATUS = 0
+                    BEGIN
+                        SET @Stt0 = '';
+                        EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@Stt0 OUTPUT;
+                        
+                        INSERT INTO dbo.BG0 (Stt0, Stt, Ma_Vt, Dvt, Gia, CK)
+                        VALUES (@Stt0, @NewStt, @Ma_Vt, @Dvt, @Gia, @CK);
+                        
+                        FETCH NEXT FROM cur INTO @Ma_Vt, @Dvt, @Gia, @CK;
+                    END
+                    
+                    CLOSE cur;
+                    DEALLOCATE cur;
+                """
+                cursor.execute(sql_d, (old_stt, new_stt))
+                
+            conn.commit()
+            conn.close()
+            
+            messagebox.showinfo("Thành công", f"Đã nhân bản thành công {len(stt_list)} bảng giá!")
+            self.on_search()
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Có lỗi xảy ra:\n{str(e)}")
 
     def on_search(self):
         from_d = self.normalize_date(self.entry_from.get())
