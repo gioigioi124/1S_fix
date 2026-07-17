@@ -202,11 +202,27 @@ def import_excel_new(filepath):
         cursor.execute("SELECT TOP 1 Ma_DvCs FROM VTSYS.dbo.DmDvCs")
         row = cursor.fetchone()
         ma_dvcs = row[0].strip() if row else '01'
-        
+        try:
+            cursor.fast_executemany = True
+        except:
+            pass
+            
         success_headers = 0
         success_details = 0
         
         try:
+            # Tạo bảng tạm trên SQL Server để hứng toàn bộ dữ liệu chi tiết
+            cursor.execute("""
+                CREATE TABLE #TempBG0 (
+                    Stt char(20),
+                    Ma_Vt varchar(16),
+                    Gia numeric(18,4),
+                    CK numeric(18,4)
+                )
+            """)
+            
+            detail_insert_data = []
+            
             for (ngay_ct, so_ct, ma_dt, ma_vm), group_df in groups:
                 cursor.execute(f"""
                     SET NOCOUNT ON;
@@ -227,28 +243,47 @@ def import_excel_new(filepath):
                 cursor.execute(sql_h, (stt, ngay_str, so_ct, ma_dt, ma_vm, ngay_str, username))
                 success_headers += 1
                 
+                # Gom dữ liệu mặt hàng (detail) vào mảng trên RAM thay vì gọi SQL từng dòng
                 for _, detail_row in group_df.iterrows():
-                    cursor.execute(f"""
-                        SET NOCOUNT ON;
-                        DECLARE @p_Stt char(20) = '';
-                        EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@p_Stt OUTPUT;
-                        SELECT @p_Stt AS Stt;
-                    """)
-                    row0 = cursor.fetchone()
-                    if not row0 or not row0.Stt:
-                        raise Exception("Không thể tạo số thứ tự Stt0.")
-                    stt0 = row0.Stt
-                    
-                    ma_vt = detail_row['Ma_Vt']
-                    gia = detail_row['Gia']
-                    ck = detail_row['CK']
-                    
-                    sql_d = """
-                        INSERT INTO dbo.BG0 (Stt0, Stt, Ma_Vt, Dvt, Gia, CK)
-                        VALUES (?, ?, ?, ISNULL((SELECT TOP 1 Dvt FROM VTSYS.dbo.DmVt WHERE Ma_Vt = ?), ''), ?, ?)
-                    """
-                    cursor.execute(sql_d, (stt0, stt, ma_vt, ma_vt, gia, ck))
+                    detail_insert_data.append((stt, detail_row['Ma_Vt'], detail_row['Gia'], detail_row['CK']))
                     success_details += 1
+                    
+            # Bơm toàn bộ dữ liệu mặt hàng vào bảng tạm siêu tốc (Batch Insert)
+            if detail_insert_data:
+                cursor.executemany("INSERT INTO #TempBG0 (Stt, Ma_Vt, Gia, CK) VALUES (?, ?, ?, ?)", detail_insert_data)
+                
+                # Lệnh duy nhất yêu cầu SQL Server TỰ MÌNH duyệt và xin mã Stt0 (Loại bỏ 100% độ trễ mạng)
+                sql_process_temp = f"""
+                    SET NOCOUNT ON;
+                    DECLARE @Stt char(20), @Ma_Vt varchar(16), @Gia numeric(18,4), @CK numeric(18,4);
+                    DECLARE @Stt0 char(20);
+                    
+                    DECLARE cur CURSOR LOCAL FAST_FORWARD FOR 
+                    SELECT Stt, Ma_Vt, Gia, CK FROM #TempBG0;
+                    
+                    OPEN cur;
+                    FETCH NEXT FROM cur INTO @Stt, @Ma_Vt, @Gia, @CK;
+                    
+                    WHILE @@FETCH_STATUS = 0
+                    BEGIN
+                        SET @Stt0 = '';
+                        EXEC VTSYS.dbo.ST_Increase_KeyIndex @p_Ma_DvCs='{ma_dvcs}', @p_Stt=@Stt0 OUTPUT;
+                        
+                        INSERT INTO dbo.BG0 (Stt0, Stt, Ma_Vt, Dvt, Gia, CK)
+                        VALUES (
+                            @Stt0, @Stt, @Ma_Vt, 
+                            ISNULL((SELECT TOP 1 Dvt FROM VTSYS.dbo.DmVt WHERE Ma_Vt = @Ma_Vt), ''), 
+                            @Gia, @CK
+                        );
+                        
+                        FETCH NEXT FROM cur INTO @Stt, @Ma_Vt, @Gia, @CK;
+                    END
+                    
+                    CLOSE cur;
+                    DEALLOCATE cur;
+                    DROP TABLE #TempBG0;
+                """
+                cursor.execute(sql_process_temp)
                     
             conn.commit()
             msg = f"Import hoàn tất!\n\nSố bảng giá (Header): {success_headers}\nSố dòng chi tiết (Detail): {success_details}"
