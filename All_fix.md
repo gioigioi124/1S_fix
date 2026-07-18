@@ -768,3 +768,110 @@ Sau khi sửa, đã compile lại form:
 ```foxpro
 COMPILE FORM e:\1S2024\FRM\ctbhd.scx
 ```
+
+## 15. Kế Hoạch Điền Sẵn Mã Nhập Xuất 131 Và Tài Khoản Nợ 1311 Khi Thêm Mới Bằng F2
+
+### Mục Tiêu
+
+Khi người dùng đang ở danh sách `ctbhh.scx` và nhấn `F2` để thêm mới chứng từ bán hàng trong `ctbhd.scx`, form mở ra phải tự điền sẵn:
+
+- Mã nhập xuất: `131`
+- Tài khoản Nợ: `1311`
+
+Người dùng vẫn có thể sửa lại thủ công nếu cần.
+
+### Thông Tin Đã Xác Minh Trên Form Và Schema
+
+- Control "Mã nhập xuất" là `txtMa_Nx`.
+- `txtMa_Nx.ControlSource = "K_PhTemp1.Ma_Nx"`.
+- Tên mã nhập xuất hiển thị ở `txtTen_Nx.ControlSource = "K_PhTemp1.Ten_Nx"`.
+- Control "Tài khoản Nợ" là `txtTk2`.
+- `txtTk2.ControlSource = "K_PhTemp1.Tk2"`.
+- Tên tài khoản hiển thị ở `txtTen_Tk2.ControlSource = "K_PhTemp1.Ten_Tk2"`.
+- Trong `vp2014_schema.md`, bảng header `CtBH` có các cột `Ma_Nx` và `Tk2`. Vì vậy cần cập nhật `K_PhTemp1`, không cập nhật cursor chi tiết `K_CtTemp`.
+- `txtMa_Nx.LostFocus` hiện có logic lookup `DmNx` và tự gán `Tk2 = M_DmNx.Tk` nếu tài khoản còn trống. Tuy nhiên khi điền bằng code trong `Init`, event `LostFocus` có thể không chạy, nên kế hoạch phải tự gán cả mã, tên và tài khoản.
+
+### Vị Trí Sửa Dự Kiến
+
+Sửa trong method `Init` của form `FRM\ctbhd.scx`, object `frmdocitemd`, trong nhánh:
+
+```foxpro
+IF THIS._Moi_Sua = 'M'
+	=Add_One_Voucher(THIS)
+	...
+ELSE
+	=Edit_One_Voucher(THIS)
+ENDIF
+```
+
+Đặt block mới sau các block đang tự điền thêm khi F2, cụ thể sau block lấy `Ma_Bp/Ten_Bp` và sau block lấy `Ma_Xe/Ten_Xe`, trước `ELSE =Edit_One_Voucher(THIS)`.
+
+### Logic Dự Kiến
+
+1. Chỉ chạy khi `_Moi_Sua = 'M'`.
+2. Gán mặc định `K_PhTemp1.Ma_Nx = '131'`.
+3. Lookup `M_DmNx` theo `Ma_Nx = '131'` để lấy:
+   - `Ten_Nx` điền vào `K_PhTemp1.Ten_Nx`.
+   - `Posted = IIF(M_DmNx.Dinh_Khoan = 'C', .T., .F.)`, giống logic hiện có trong `txtMa_Nx.LostFocus`.
+4. Gán mặc định `K_PhTemp1.Tk2 = '1311'`.
+5. Lookup `M_DmTk` theo `Tk = '1311'` để lấy `Ten_Tk2`.
+6. Refresh các control liên quan nếu tồn tại:
+   - `txtMa_Nx`
+   - `txtTen_Nx`
+   - `txtTk2`
+   - `txtTen_Tk2`
+
+### Đoạn Code Dự Kiến
+
+```foxpro
+IF TYPE('K_PhTemp1.Ma_Nx') <> 'U'
+	REPLACE Ma_Nx WITH '131' IN K_PhTemp1
+	IF USED('M_DmNx') AND SEEKSQL('131', 'M_DmNx', 'Ma_Nx')
+		REPLACE Ten_Nx WITH M_DmNx.Ten_Nx, ;
+			Posted WITH IIF(M_DmNx.Dinh_Khoan = 'C', .T., .F.) IN K_PhTemp1
+	ENDIF
+ENDIF
+
+IF TYPE('K_PhTemp1.Tk2') <> 'U'
+	REPLACE Tk2 WITH '1311' IN K_PhTemp1
+	IF USED('M_DmTk') AND SEEKSQL('1311', 'M_DmTk', 'Tk')
+		REPLACE Ten_Tk2 WITH M_DmTk.Ten_Tk IN K_PhTemp1
+	ENDIF
+ENDIF
+
+IF PEMSTATUS(THISFORM, 'txtMa_Nx', 5)
+	THISFORM.txtMa_Nx.Refresh()
+	THISFORM.txtTen_Nx.Refresh()
+	THISFORM.txtTk2.Refresh()
+	THISFORM.txtTen_Tk2.Refresh()
+ENDIF
+```
+
+### Điểm Cần Kiểm Tra Khi Thực Hiện
+
+- Nếu `M_DmNx` chưa được nạp tại thời điểm `Init`, cần fallback bằng SQL/query hoặc chỉ điền `Ma_Nx/Tk2` rồi để lookup xử lý khi người dùng đi qua control.
+- Kiểm tra `Ma_Nx = '131'` có tồn tại trong danh mục `DmNx`.
+- Kiểm tra `Tk = '1311'` có tồn tại trong danh mục `DmTk` và thỏa filter hiện tại của `txtTk2`: `Loai_Tk = 'C'`.
+- Test F2 từ `ctbhh`: form mở lên phải thấy `131` và `1311` ngay, không cần enter qua ô.
+- Test nhánh sửa chứng từ cũ: mở sửa phiếu không được tự đổi `Ma_Nx/Tk2`.
+- Compile lại form sau khi sửa:
+
+```foxpro
+COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+```
+
+### Trạng Thái Đã Thực Hiện
+
+Đã sửa `FRM\ctbhd.scx` / `FRM\ctbhd.SCT` theo kế hoạch trên. Trong `frmdocitemd.Init`, ngay sau các block tự điền `Ma_Bp/Ten_Bp` và `Ma_Xe/Ten_Xe`, đã thêm block mặc định:
+
+- `K_PhTemp1.Ma_Nx = '131'`
+- `K_PhTemp1.Tk2 = '1311'`
+- Nếu cursor `M_DmNx` đã nạp, tự lấy `Ten_Nx` và cập nhật `Posted` theo `M_DmNx.Dinh_Khoan`.
+- Nếu cursor `M_DmTk` đã nạp và tài khoản `1311` có `Loai_Tk = 'C'`, tự lấy `Ten_Tk2`.
+- Refresh các control `txtMa_Nx`, `txtTen_Nx`, `txtTk2`, `txtTen_Tk2`.
+
+Đã compile lại form thành công:
+
+```foxpro
+COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+```
