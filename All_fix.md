@@ -699,3 +699,72 @@ Sau khi sửa, biên dịch lại form bằng:
 ```foxpro
 COMPILE FORM e:S2024\FRM\ctbhd.scx
 ```
+
+## 14. Sửa Lỗi Không Tự Lấy Mã Xe Khi Thêm Mới Bằng F2 Từ Danh Sách Bán Hàng
+
+### Hiện Tượng
+
+Khi đang chọn một phiếu bán hàng ở `ctbhh.scx` rồi nhấn `F2` để thêm mới, form nhập liệu `ctbhd.scx` mở ra và đã lấy được một số thông tin từ phiếu đang chọn. Tuy nhiên ô "Mã xe" (`txtMa_Xe`) và tên xe (`txtTen_Xe`) vẫn bị trống.
+
+### Thông Tin Schema Đã Kiểm Tra
+
+- `ctbhh.scx` đang hiển thị dữ liệu từ bảng `CtBH`.
+- Trong `vp2014_schema.md`, bảng `CtBH` có cột `Ma_Xe`.
+- Bảng `CtBH0` trong schema hiện tại là bảng chi tiết vật tư/hàng hóa và không có cột `Ma_Xe`.
+- Trên form `ctbhd.scx`, control `txtMa_Xe` đang bind vào `K_PhTemp1.Ma_Xe`, còn `txtTen_Xe` bind vào `K_PhTemp1.Ten_Xe`. Vì vậy phải cập nhật cursor header `K_PhTemp1`, tương ứng dữ liệu header `CtBH`, không cập nhật `K_CtTemp`/`CtBH0`.
+- Danh mục xe là `DmXe`, có `Ma_Xe` và `Ten_Xe`.
+
+### Cách Đã Sửa
+
+Sửa trong method `Init` của form `FRM\ctbhd.scx`, object `frmdocitemd`, ngay sau `=Add_One_Voucher(THIS)` và sau block tự lấy bộ phận `Ma_Bp/Ten_Bp`.
+
+Logic mới:
+
+```foxpro
+IF TYPE('K_PhTemp1.Ma_Xe') <> 'U'
+	LOCAL lcMa_Xe, lcTen_Xe, lcStt_Old, loRS_Xe, lcSQL_Xe
+	STORE [] TO lcMa_Xe, lcTen_Xe, lcStt_Old, lcSQL_Xe
+	IF USED('K_PhTemp')
+		IF TYPE('K_PhTemp.Ma_Xe') <> 'U'
+			lcMa_Xe = NVL(K_PhTemp.Ma_Xe, [])
+		ENDIF
+		IF TYPE('K_PhTemp.Ten_Xe') <> 'U'
+			lcTen_Xe = NVL(K_PhTemp.Ten_Xe, [])
+		ENDIF
+		IF EMPTY(lcMa_Xe) AND TYPE('K_PhTemp.Stt') <> 'U'
+			lcStt_Old = NVL(K_PhTemp.Stt, [])
+		ENDIF
+	ENDIF
+	IF EMPTY(lcMa_Xe) AND NOT EMPTY(lcStt_Old)
+		TRY
+			lcSQL_Xe = [SELECT Ma_Xe FROM CtBH WHERE Stt = ] + CHR(39) + STRTRAN(ALLTRIM(lcStt_Old), CHR(39), CHR(39) + CHR(39)) + CHR(39)
+			loRS_Xe = oConnDataSource.Execute(lcSQL_Xe)
+			IF NOT loRS_Xe.EOF
+				lcMa_Xe = NVL(loRS_Xe.Fields('Ma_Xe').Value, [])
+			ENDIF
+			loRS_Xe.Close()
+			loRS_Xe = NULL
+		CATCH
+		ENDTRY
+	ENDIF
+	IF NOT EMPTY(lcMa_Xe)
+		IF EMPTY(lcTen_Xe) AND USED('M_DmXe')
+			IF SEEKSQL(lcMa_Xe, 'M_DmXe', 'Ma_Xe')
+				lcTen_Xe = NVL(M_DmXe.Ten_Xe, [])
+			ENDIF
+		ENDIF
+		REPLACE Ma_Xe WITH lcMa_Xe IN K_PhTemp1
+		IF TYPE('K_PhTemp1.Ten_Xe') <> 'U'
+			REPLACE Ten_Xe WITH lcTen_Xe IN K_PhTemp1
+		ENDIF
+	ENDIF
+ENDIF
+```
+
+Cách này ưu tiên lấy trực tiếp `Ma_Xe/Ten_Xe` từ cursor phiếu đang chọn `K_PhTemp`. Nếu cursor danh sách không mang sẵn `Ma_Xe`, hệ thống dùng `Stt` của phiếu đang chọn để truy vấn lại `CtBH.Ma_Xe`, sau đó lấy tên xe từ cursor danh mục `M_DmXe` nếu đã được nạp.
+
+Sau khi sửa, đã compile lại form:
+
+```foxpro
+COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+```
