@@ -882,3 +882,29 @@ COMPILE FORM e:\1S2024\FRM\ctbhd.scx
 ```foxpro
 COMPILE FORM e:\1S2024\FRM\ctbhd.scx
 ```
+
+## 16. Thêm Label Hiển Thị Giới Hạn Nợ Và Công Nợ TK 131 Trên Form ctbhd
+
+### Yêu Cầu
+
+Hiển thị trực quan "Giới hạn nợ" và "Công nợ hiện tại (TK 131)" của khách hàng trên form `ctbhd` (ở khu vực cạnh input hợp đồng) để người dùng dễ dàng theo dõi ngay khi nhập phiếu mà không cần chờ lúc lưu mới bị cảnh báo.
+
+### Cách Khắc Phục / Thực Hiện
+
+- **Vị trí**: Nằm trên cùng hàng với "Hợp đồng" (Top = 20-22).
+- **Giải phóng không gian**: Thu hẹp `txtTen_HD.Width` từ `429` xuống `200` để có khoảng trống (khoảng hơn 200px) cho 2 label mới.
+- **Thêm Control**: Khởi tạo động 2 label bằng `THIS.AddObject` trong method `Init` của form (`frmdocitemd`):
+  - `lblGioiHan`: Chữ màu đỏ đậm (`RGB(128, 0, 0)`), hiển thị dạng `GH: xxx,xxx`.
+  - `lblCongNo`: Chữ màu xanh đậm (`RGB(0, 0, 200)`), hiển thị dạng `CN: xxx,xxx`. Tự động đổi sang màu đỏ (`RGB(255, 0, 0)`) nếu công nợ $\ge$ giới hạn nợ.
+- **Thêm Method `RefreshDebtLabels`**: Tạo procedure mới trong form `frmdocitemd` để xử lý logic:
+  - Lấy `Gioi_Han` từ cursor `M_DmDt` hoặc fallback truy vấn trực tiếp SQL Server (`VTSYS.dbo.DmDt`).
+  - Lấy dư nợ tài khoản `131` từ thủ tục `GL_Alert_ClosingAccount4Customer`, truyền vào `DATE()` (ngày hiện tại).
+- **Gọi Cập Nhật**: Gọi `THISFORM.RefreshDebtLabels()` tại các sự kiện:
+  - `txtMa_Dt.LostFocus`: Khi người dùng chọn/đổi mã khách hàng.
+  - `txtMa_Dt.GotFocus`: Khi quay lại ô mã đối tượng.
+  - `frmdocitemd.Init`: Khi mở form (áp dụng cho cả nhánh Thêm mới `M` và Sửa `S`).
+
+### Lưu Ý Quan Trọng
+
+- **Không dùng tiếng Việt có dấu**: Tất cả các code gán giá trị chuỗi (như `GH:`, `CN:`) và comment trong method được viết hoàn toàn bằng tiếng Anh/không dấu để tránh lỗi mã hóa TCVN3 trên trình biên dịch VFP.
+- Tuân thủ scoping biến giống các module trước (sử dụng `STORE 0 TO __Du_No` để biến có thể nhận kết quả từ `ADOCommand`).
