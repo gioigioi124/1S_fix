@@ -1,3 +1,10 @@
+# Nguyên tắc khi làm việc
+
+Cho tất cả các file tạm vào thư mục scratch để check, inject code ... nếu xong nhiệm vụ rồi thì xóa đi, tránh lẫn với file gốc.
+Không thêm, sửa xóa bất cứ thứ gì trong SQL sever, database khi chưa được phép.
+Cấu trúc các bảng trong database có trong file vp2014_schema.md
+Code của các form trong thư mục FRM đã được tổng hợp trong thư mục SCT_OUTPUT (code gốc), những file đã sửa hiện như ctbhd, ctbhh, kct04 sẽ không dùng những code đó nữa.
+
 # Ghi Chú Tổng Hợp Các Bản Sửa
 
 Ngày cập nhật: 2026-07-03
