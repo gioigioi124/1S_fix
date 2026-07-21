@@ -897,14 +897,14 @@ Hiển thị trực quan "Giới hạn nợ" và "Công nợ hiện tại (TK 13
   - `lblGioiHan`: Chữ màu đỏ đậm (`RGB(128, 0, 0)`), hiển thị dạng `GH: xxx,xxx`.
   - `lblCongNo`: Chữ màu xanh đậm (`RGB(0, 0, 200)`), hiển thị dạng `CN: xxx,xxx`. Tự động đổi sang màu đỏ (`RGB(255, 0, 0)`) nếu công nợ $\ge$ giới hạn nợ.
 - **Thêm Method `RefreshDebtLabels`**: Tạo procedure mới trong form `frmdocitemd` để xử lý logic:
-  - Lấy `Gioi_Han` từ cursor `M_DmDt` hoặc fallback truy vấn trực tiếp SQL Server (`VTSYS.dbo.DmDt`).
-  - Lấy dư nợ tài khoản `131` từ thủ tục `GL_Alert_ClosingAccount4Customer`, truyền vào `DATE()` (ngày hiện tại).
+  - Lấy `Gioi_Han`: Truy vấn trực tiếp từ SQL Server (`VTSYS.dbo.DmDt`) thay vì lấy từ cursor `M_DmDt` để tránh bị cache khi hạn mức vừa được đổi ở tab khác.
+  - Lấy dư nợ tài khoản `131` từ thủ tục `GL_Alert_ClosingAccount4Customer`. Để lấy chính xác công nợ "đến thời điểm hiện tại", truyền vào ngày tương lai (`DATE() + 3650`) và tham số `Stt = 'z'` (thay vì lấy `Stt` của chứng từ hiện tại vốn sẽ loại bỏ các chứng từ phát sinh sau nó).
 - **Gọi Cập Nhật**: Gọi `THISFORM.RefreshDebtLabels()` tại các sự kiện:
-  - `txtMa_Dt.LostFocus`: Khi người dùng chọn/đổi mã khách hàng.
+  - `txtMa_Dt.LostFocus`: Khi người dùng chọn/đổi mã khách hàng. (Đã chèn lệnh này vào _trước_ lệnh `RETURN` của block cảnh báo "Quá giới hạn nợ" để đảm bảo label vẫn được cập nhật ngay cả khi khách bị vượt hạn mức).
   - `txtMa_Dt.GotFocus`: Khi quay lại ô mã đối tượng.
   - `frmdocitemd.Init`: Khi mở form (áp dụng cho cả nhánh Thêm mới `M` và Sửa `S`).
 
 ### Lưu Ý Quan Trọng
 
-- **Không dùng tiếng Việt có dấu**: Tất cả các code gán giá trị chuỗi (như `GH:`, `CN:`) và comment trong method được viết hoàn toàn bằng tiếng Anh/không dấu để tránh lỗi mã hóa TCVN3 trên trình biên dịch VFP.
+- **Không dùng tiếng Việt có dấu**: Tất cả các code gán giá trị chuỗi (như `GH: `, `CN: `) và comment trong method được viết hoàn toàn bằng tiếng Anh/không dấu để tránh lỗi mã hóa TCVN3 trên trình biên dịch VFP. (Lưu ý: Đã thêm một khoảng trắng sau dấu hai chấm để số tiền không bị dính sát vào chữ).
 - Tuân thủ scoping biến giống các module trước (sử dụng `STORE 0 TO __Du_No` để biến có thể nhận kết quả từ `ADOCommand`).
