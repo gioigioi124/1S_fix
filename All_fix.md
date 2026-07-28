@@ -908,3 +908,44 @@ Hiển thị trực quan "Giới hạn nợ" và "Công nợ hiện tại (TK 13
 
 - **Không dùng tiếng Việt có dấu**: Tất cả các code gán giá trị chuỗi (như `GH: `, `CN: `) và comment trong method được viết hoàn toàn bằng tiếng Anh/không dấu để tránh lỗi mã hóa TCVN3 trên trình biên dịch VFP. (Lưu ý: Đã thêm một khoảng trắng sau dấu hai chấm để số tiền không bị dính sát vào chữ).
 - Tuân thủ scoping biến giống các module trước (sử dụng `STORE 0 TO __Du_No` để biến có thể nhận kết quả từ `ADOCommand`).
+
+## 16. Tối Ưu Tốc Độ Mở Phiếu Và Cập Nhật Nhãn Công Nợ (Tránh Lag)
+
+### Hiện Tượng
+Sau khi thêm tính năng kiểm tra hạn mức nợ thời gian thực và hiển thị nhãn `GH:` (Giới hạn nợ), `CN:` (Công nợ hiện tại), người dùng gặp tình trạng form bán hàng load dữ liệu rất chậm (lag từ 1-2 giây) trong các trường hợp:
+1. Mở một chứng từ cũ lên để xem (`_Moi_Sua = 'S'`).
+2. Dùng chuột click vào ô Mã khách hàng (`GotFocus`).
+3. Dùng phím Enter/Tab đi ngang qua ô Mã khách hàng dù không thay đổi mã (`LostFocus`).
+
+Đặc biệt rất chậm đối với các khách hàng thuộc Nhóm Nợ (`Kieu_Cn <> '1'`).
+
+### Nguyên Nhân
+- Để hiển thị nhãn `CN:`, hàm `RefreshDebtLabels()` phải gọi thủ tục `GL_Alert_ClosingAccount4CustomerGroup` trên SQL Server. Thủ tục này chạy rất nặng vì phải quét sổ cái của toàn bộ khách hàng trong nhóm.
+- Lỗi thiết kế: `RefreshDebtLabels()` bị gọi vô tội vạ ở `GotFocus`, ở cuối `LostFocus` (bên ngoài điều kiện `_Ma_Change`), và trong hàm `Init` khi mở form ở chế độ xem. Nghĩa là việc quét sổ cái nặng nề lặp đi lặp lại không cần thiết.
+
+### Cách Đã Sửa
+Tiến hành dọn dẹp và tối ưu hóa ở 2 đối tượng trên `ctbhd.scx`:
+
+1. **Trên ô `txtMa_Dt` (Mã khách hàng):**
+   - Xóa bỏ hoàn toàn lệnh `THISFORM.RefreshDebtLabels()` trong sự kiện `GotFocus`.
+   - Trong `LostFocus`, bọc lệnh tính nhãn nợ ở cuối khối vào trong điều kiện `IF THISFORM._Ma_Change`. Đồng thời điều kiện kiểm tra nợ chính cũng được sửa thành `IF THISFORM._ma_ct = [X1] AND THISFORM._Ma_Change`. Nhờ đó, việc ấn phím đi qua sẽ không kích hoạt truy vấn SQL.
+
+2. **Trên Form `frmdocitemd` (Thủ tục `RefreshDebtLabels`):**
+   - Giữ nguyên việc lấy hạn mức `GH:` (vì đọc từ bảng danh mục rất nhanh).
+   - Bao bọc việc gọi SQL đếm công nợ nhóm (`CN:`) bằng điều kiện:
+     ```foxpro
+     IF THISFORM._Moi_Sua = 'M' OR THISFORM._Ma_Change
+        =ADOCommand('GL_Alert_ClosingAccount4CustomerGroup', ...)
+     ENDIF
+     ```
+   - Nhờ đó, khi mở phiếu lên xem (`'S'`), form bỏ qua việc gọi tính nợ nhóm, giúp form load tức thời. (Chỉ tính khi tạo mới `'M'` hoặc đổi mã). Các nhóm không đếm nợ sẽ ẩn nhãn `CN:`, chỉ hiện `GH:`.
+
+Sau khi sửa đã chạy lại `COMPILE FORM e:\1S2024\FRM\ctbhd.scx`.
+
+*(Cập nhật thêm)*: Sau khi áp dụng, phát hiện khi nhấn F2 tạo mới đơn (`_Moi_Sua = 'M'`), nếu khách hàng được copy sang là khách nhóm thì form vẫn tính lại nợ nhóm và gây lag. Do đó, điều kiện trong `RefreshDebtLabels` đã được tối ưu thêm thành chỉ còn:
+```foxpro
+IF THISFORM._Ma_Change
+   =ADOCommand('GL_Alert_ClosingAccount4CustomerGroup', ...)
+ENDIF
+```
+Tức là loại bỏ hẳn việc tính nợ nhóm khi khởi tạo form tạo mới (`'M'`). Phiếu mới sẽ chỉ đếm nợ nhóm khi người dùng thực sự thay đổi ô mã khách hàng, hoặc khi bấm Lưu.
