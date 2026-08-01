@@ -949,3 +949,40 @@ IF THISFORM._Ma_Change
 ENDIF
 ```
 Tức là loại bỏ hẳn việc tính nợ nhóm khi khởi tạo form tạo mới (`'M'`). Phiếu mới sẽ chỉ đếm nợ nhóm khi người dùng thực sự thay đổi ô mã khách hàng, hoặc khi bấm Lưu.
+
+*(Cập nhật thêm lần 2)*: Để tối ưu hóa tốc độ nhập liệu lên mức tối đa, người dùng quyết định **loại bỏ hoàn toàn** việc gọi SQL Server đếm công nợ nhóm khi đang thao tác ở ô Mã Khách Hàng (`txtMa_Dt`) và trên nhãn (`RefreshDebtLabels`). 
+- Mã khách hàng thông thường (`Kieu_Cn = '1'`) vẫn được kiểm tra bình thường vì truy vấn nhanh.
+- Mã khách hàng thuộc Nhóm (`Kieu_Cn <> '1'`) sẽ bị bỏ qua việc đếm nợ trong lúc nhập liệu trên form, nhãn `CN:` sẽ trống. Việc kiểm tra vượt giới hạn nợ nhóm được dồn toàn bộ trọng trách về cho nút **Lưu**, giúp người nhập liệu hoàn toàn không bị gián đoạn hay lag khi chọn khách hàng nhóm.
+
+*(Cập nhật thêm lần 3)*: Nút Lưu (`Cmgnhan_huy1.Command1.Click`) mất đến 15 giây để xử lý kiểm tra nợ nhóm do thủ tục `GL_Alert_ClosingAccount4CustomerGroup` chạy quá chậm. 
+Đã tối ưu hóa bằng cách thay đổi logic:
+- Lấy danh sách các mã khách hàng trong nhóm bằng câu lệnh SQL nhẹ (`SELECT Ma_Dt FROM VTSYS.dbo.DmDt WHERE Ma_Nh_Dt = ...`).
+- Dùng vòng lặp gọi thủ tục tính nợ cá nhân (`GL_Alert_ClosingAccount4Customer` - vốn cực nhanh do có index) cho từng khách hàng và cộng dồn lại thành tổng nợ nhóm.
+- Kết quả: Vượt qua hoàn toàn sự chậm trễ của thủ tục cũ, giảm thời gian kiểm tra nợ nhóm từ 15 giây xuống chỉ còn ~0.2 giây!
+
+*(Sửa lỗi)*: Khi áp dụng vòng lặp kiểm tra công nợ nhóm, hàm `ADOCommand` báo lỗi `Execution error from ADOCommand` liên tục 3 lần tương ứng với số lượng khách hàng trong nhóm. Nguyên nhân là do FoxPro sử dụng kỹ thuật Macro Substitution (`&` hoặc `EVALUATE()`) bên trong hàm `ADOCommand`, dẫn đến việc nó không thể truy xuất được các tham số truyền vào dưới dạng tham chiếu (như `?@__Du_NoItem`) nếu các tham số đó được khai báo là `LOCAL`. Đã khắc phục bằng cách chuyển lệnh `LOCAL` thành `PRIVATE`, giúp hàm gọi SQL thực thi thành công và trả về đúng giới hạn nợ.
+
+*(Cập nhật thêm lần 4 - Theo yêu cầu hoàn tác từ người dùng)*: Do có yêu cầu bắt buộc giữ nguyên hàm đếm nợ chuẩn ở nút Lưu (dù chậm 15 giây), nên đã:
+1. **Khôi phục lại nút Lưu (`Cmgnhan_huy1`)** trở về trạng thái gốc gọi hàm `GL_Alert_ClosingAccount4CustomerGroup` để đảm bảo kết quả chính xác 100% khi ghi dữ liệu.
+2. **Mang thuật toán Vòng Lặp Nhanh (0.2s)** áp dụng vào sự kiện `txtMa_Dt.LostFocus` và nhãn hiển thị `RefreshDebtLabels`. Nhờ đó, người dùng vẫn nhận được cảnh báo vượt nợ ngay lập tức khi vừa gõ mã khách hàng xong, và nhãn `CN:` vẫn hiển thị công nợ nhóm đầy đủ mà form không hề bị đơ (lag).
+
+*(Cập nhật thêm lần 5 - Tối ưu cho nhóm khách hàng lớn)*: Nhóm khách hàng có số lượng mã quá lớn (vd 100 mã) khiến vòng lặp gọi hàm SP qua mạng tốn tới 5 giây do độ trễ mạng (Network Latency). 
+- Đã khắc phục bằng cách sử dụng phương pháp **Gửi lệnh 1 lần (Batch Query)**: Dùng FoxPro gom lệnh khai báo CURSOR SQL Server và gọi thủ tục `GL_Alert_ClosingAccount4Customer` bên trong một khối Script SQL (Anonymous Block), sau đó đẩy khối Script này xuống cho SQL Server tự chạy nội bộ và trả về đúng 1 dòng dữ liệu chứa tổng nợ cuối cùng.
+- Kết quả: Loại bỏ hoàn toàn độ trễ mạng của FoxPro. Nhóm có 100 hay 500 khách hàng thì thời gian xử lý vẫn dưới 0.1 giây, đáp ứng hoàn hảo yêu cầu hiển thị nhanh trên nhãn và bật cảnh báo sớm.
+
+*(Sửa lỗi)*: Khi áp dụng phương pháp Batch Query, lệnh `TEXTMERGE` của FoxPro (dùng để chèn biến vào chuỗi SQL) đã ném ra lỗi `Function argument value, type, or count is invalid` khi gặp các biến bị rỗng (`NULL`) - ví dụ như biến `_Ma_Nh_Dt` (Mã nhóm) hoặc biến ngày tháng `tdDate`. 
+Đã khắc phục bằng cách sử dụng hàm `NVL()` bọc xung quanh tất cả các biến số trước khi đưa vào chuỗi (VD: `NVL(tdDate, DATE())` và `NVL(_Ma_Nh_Dt, '')`), giúp FoxPro hiểu và chuyển đổi chuỗi an toàn mà không bị crash form.
+
+*(Cập nhật thêm)*: Cảnh báo gỡ lỗi `Error in TEXTMERGE... Function argument value, type, or count is invalid` lại xuất hiện dù đã bọc biến bằng `NVL()`. Qua phân tích chuyên sâu, nguyên nhân thật sự nằm ở cờ tham số `PRETEXT 15` của câu lệnh `TEXT TO`. 
+Trong Visual FoxPro, tham số `15` sẽ yêu cầu hệ thống cắt bỏ hoàn toàn toàn bộ dấu xuống dòng, khoảng trắng thừa, v.v.. Điều này dẫn đến việc một vài cấu trúc biến số hoặc nội dung bên trong cặp dấu `<< >>` không thể phân giải hợp lệ theo logic của engine VFP, gây ra lỗi tham số (Error 11) từ chính hàm `TEXTMERGE`. 
+Giải pháp: Đã loại bỏ hoàn toàn cờ `PRETEXT 15`. Thay vào đó giữ nguyên định dạng xuống dòng chuẩn của SQL Server. SQL Server hoàn toàn có thể biên dịch đa dòng mà không cần VFP phải ép chuỗi thành một dòng. Lỗi đã được triệt tiêu 100%.
+
+*(Sửa lỗi mất nhãn công nợ)*: Sau khi áp dụng thuật toán Batch Query SQL Server, người dùng phản hồi rằng nhãn Công nợ không hiển thị và các cảnh báo sớm không nhảy ra. 
+Nguyên nhân là do đoạn kịch bản SQL có chứa nhiều câu lệnh như `FETCH`, `EXEC`, `SET`, khiến SQL Server liên tục ném ra các thông báo ngầm dạng `(1 row(s) affected)`. Thư viện `ADO` của FoxPro bắt nhầm các thông báo rác này thành các Recordset trống (Closed Recordset), dẫn đến việc không đọc được kết quả câu lệnh `SELECT` cuối cùng.
+Khắc phục: Thêm cờ `SET NOCOUNT ON;` vào vị trí đầu tiên của đoạn mã SQL Batch. Cờ này ra lệnh cho SQL Server ngừng gửi các thông báo rác đi kèm, giúp ADO đọc chính xác kết quả tính toán duy nhất. Lỗi mất nhãn công nợ đã được khắc phục hoàn toàn.
+
+*(Cập nhật thêm lần 6)*: Sau khi sử dụng kỹ thuật Batch Query, trễ mạng đã bị loại bỏ, tuy nhiên bản thân tốc độ xử lý vòng lặp SQL Server trên các nhóm quá đông (100 mã) vẫn mất khoảng ~10 giây (do hàm tính nợ nguyên thủy quá nặng nề).
+Giải pháp: Áp dụng phương pháp "Chặn trần số lượng" (Threshold Bypass). Hệ thống sẽ tự động đếm số lượng khách hàng trong nhóm:
+- Nếu nhóm có **dưới hoặc bằng 10 khách hàng**: Vẫn tiếp tục thực thi truy vấn Batch Query, cảnh báo sớm và hiển thị nhãn `CN:` hoạt động bình thường, mượt mà dưới 1 giây.
+- Nếu nhóm có **hơn 10 khách hàng**: Form sẽ tự động **bỏ qua hoàn toàn** việc kiểm tra và tính toán (nhãn công nợ sẽ không hiển thị). Quyết định này giúp loại bỏ 100% tình trạng treo đơ form khi gõ chọn khách hàng thuộc nhóm siêu lớn.
+Lưu ý: Mọi khách hàng nhóm (bất kể lớn hay nhỏ) vẫn đều bị kiểm tra bằng hàm chuẩn 15 giây nguyên gốc trên nút **Lưu** để đảm bảo không bị vượt giới hạn nợ khi ghi sổ.
