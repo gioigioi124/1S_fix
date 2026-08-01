@@ -986,3 +986,5 @@ Giải pháp: Áp dụng phương pháp "Chặn trần số lượng" (Threshold
 - Nếu nhóm có **dưới hoặc bằng 10 khách hàng**: Vẫn tiếp tục thực thi truy vấn Batch Query, cảnh báo sớm và hiển thị nhãn `CN:` hoạt động bình thường, mượt mà dưới 1 giây.
 - Nếu nhóm có **hơn 10 khách hàng**: Form sẽ tự động **bỏ qua hoàn toàn** việc kiểm tra và tính toán (nhãn công nợ sẽ không hiển thị). Quyết định này giúp loại bỏ 100% tình trạng treo đơ form khi gõ chọn khách hàng thuộc nhóm siêu lớn.
 Lưu ý: Mọi khách hàng nhóm (bất kể lớn hay nhỏ) vẫn đều bị kiểm tra bằng hàm chuẩn 15 giây nguyên gốc trên nút **Lưu** để đảm bảo không bị vượt giới hạn nợ khi ghi sổ.
+
+*(Cập nhật thêm)*: Đã thêm chức năng hiển thị mã vùng miền (`Ma_Vm`) trên form. Nhãn vùng miền (`lblVm`) được thiết kế tách biệt đứng ngay bên phải nhãn công nợ thay vì gộp chung vào để tránh hiện tượng bị khuất chữ khi số tiền quá dài. Mã vùng miền được lấy trực tiếp từ cursor `M_DmDt` để đảm bảo tốc độ và không làm chậm form.
