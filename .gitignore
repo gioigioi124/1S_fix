@@ -21,3 +21,7 @@ node_modules/
 !Import_BG/import_bang_gia_tool.py
 !Import_BG/cai_dat_thu_vien.bat
 !Import_BG/chay_phan_mem.vbs
+!import_baoco_app/import_baoco_tool.py
+!import_baoco_app/cai_dat_thu_vien.bat
+!import_baoco_app/chay_phan_mem.vbs
+!a_import_python_app.md
