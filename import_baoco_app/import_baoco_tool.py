@@ -41,7 +41,8 @@ def import_excel(filepath, username):
         import os
         
         # Create a temporary file to avoid PermissionError when Excel file is open
-        fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+        _, ext = os.path.splitext(filepath)
+        fd, temp_path = tempfile.mkstemp(suffix=ext if ext else '.xlsx')
         os.close(fd)
         
         try:
@@ -168,6 +169,13 @@ def import_excel(filepath, username):
                 """
                 cursor.execute(sql_d, (stt0, stt, so_tien, so_tien, noi_dung, ma_kh))
                 
+                # Ghi sổ (Post) chứng từ để cập nhật công nợ và sổ cái
+                cursor.execute("""
+                    SET NOCOUNT ON;
+                    DECLARE @res smallint;
+                    EXEC dbo.CtT_Post @p_Stt=?, @p_Result=@res OUTPUT;
+                """, (stt,))
+                
                 success_count += 1
                 
             conn.commit()
@@ -185,40 +193,182 @@ def import_excel(filepath, username):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Công cụ Import Báo Có (Tiền Gửi) VP2014")
-        self.geometry("600x350")
+        self.title("Công cụ Quản lý và Import Báo Có (Tiền Gửi) VP2014")
+        self.geometry("900x450")
         self.eval('tk::PlaceWindow . center')
         
-        ttk.Label(self, text="IMPORT CHỨNG TỪ BÁO CÓ", font=("Arial", 16, "bold")).pack(pady=15)
-        ttk.Label(self, text="File Excel phải chứa ít nhất 6 cột theo thứ tự:").pack()
-        ttk.Label(self, text="1. Tên TK   2. Số TK   3. Nội dung   4. Số tiền   5. Ngày   6. Mã KH", foreground="blue").pack(pady=5)
+        # === PHẦN XEM DỮ LIỆU ===
+        ttk.Label(self, text="TRA CỨU SỔ TIỀN GỬI (11212) - BÁO NỢ / BÁO CÓ", font=("Arial", 14, "bold")).pack(pady=10)
         
-        # Frame cho File Excel
-        frame_file = tk.Frame(self)
-        frame_file.pack(fill="x", padx=20, pady=10)
+        frame_search = tk.Frame(self)
+        frame_search.pack(fill="x", padx=10, pady=5)
         
-        tk.Label(frame_file, text="File Excel:").pack(side="left", padx=5)
-        self.entry_file = tk.Entry(frame_file, width=50)
+        import datetime
+        today = datetime.date.today()
+        
+        tk.Label(frame_search, text="Từ ngày (dd/mm/yyyy):").pack(side="left", padx=5)
+        self.entry_start = tk.Entry(frame_search, width=15)
+        self.entry_start.insert(0, today.strftime("%d/%m/%Y"))
+        self.entry_start.pack(side="left", padx=5)
+        
+        tk.Label(frame_search, text="Đến ngày:").pack(side="left", padx=5)
+        self.entry_end = tk.Entry(frame_search, width=15)
+        self.entry_end.insert(0, today.strftime("%d/%m/%Y"))
+        self.entry_end.pack(side="left", padx=5)
+        
+        btn_search = tk.Button(frame_search, text="Tìm kiếm", bg="#2196F3", fg="white", command=self.on_search)
+        btn_search.pack(side="left", padx=15)
+        
+        # Treeview
+        frame_tree = tk.Frame(self)
+        frame_tree.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        cols = ("Ngay", "So_Ct", "KhachHang", "NoiDung", "TienNo", "TienCo", "LuyKe")
+        self.tree = ttk.Treeview(frame_tree, columns=cols, show="headings", height=12)
+        
+        self.tree.heading("Ngay", text="Ngày")
+        self.tree.heading("So_Ct", text="Số CT")
+        self.tree.heading("KhachHang", text="Khách hàng")
+        self.tree.heading("NoiDung", text="Nội dung")
+        self.tree.heading("TienNo", text="Báo có")
+        self.tree.heading("TienCo", text="Báo nợ")
+        self.tree.heading("LuyKe", text="Lũy kế")
+        
+        self.tree.column("Ngay", width=60, anchor="center")
+        self.tree.column("So_Ct", width=40, anchor="center")
+        self.tree.column("KhachHang", width=200)
+        self.tree.column("NoiDung", width=250)
+        self.tree.column("TienNo", width=80, anchor="e")
+        self.tree.column("TienCo", width=80, anchor="e")
+        self.tree.column("LuyKe", width=80, anchor="e")
+        
+        scrollbar = ttk.Scrollbar(frame_tree, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True)
+        
+        ttk.Separator(self, orient='horizontal').pack(fill='x', pady=10)
+        
+        # === PHẦN IMPORT ===
+        ttk.Label(self, text="IMPORT CHỨNG TỪ BÁO CÓ MỚI (Excel: 1.TênTK | 2.SốTK | 3.Nội dung | 4.Số tiền | 5.Ngày | 6.MãKH)", font=("Arial", 11, "bold")).pack(pady=5)
+        
+        frame_action = tk.Frame(self)
+        frame_action.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(frame_action, text="File Excel:").pack(side="left")
+        self.entry_file = tk.Entry(frame_action, width=50)
         self.entry_file.insert(0, r"C:\Users\Administrator\OneDrive\ELAN\Import\baoCo\baoCo.xlsx")
         self.entry_file.pack(side="left", padx=5)
         
-        btn_browse = tk.Button(frame_file, text="Chọn...", command=self.on_browse)
-        btn_browse.pack(side="left", padx=5)
+        tk.Button(frame_action, text="Chọn...", command=self.on_browse).pack(side="left")
         
-        # Frame cho tuỳ chọn User
-        frame_user = tk.Frame(self)
-        frame_user.pack(fill="x", padx=20, pady=10)
-        
-        tk.Label(frame_user, text="Tài khoản nhập:").pack(side="left", padx=5)
-        self.combo_user = ttk.Combobox(frame_user, values=["KTTH", "ADMIN", "KTCN3", "KTCN"], state="readonly", width=15)
+        tk.Label(frame_action, text=" TK:").pack(side="left", padx=(15, 2))
+        self.combo_user = ttk.Combobox(frame_action, values=["KTTH", "ADMIN", "KTCN3", "KTCN"], state="readonly", width=7)
         self.combo_user.current(0)
-        self.combo_user.pack(side="left", padx=5)
+        self.combo_user.pack(side="left")
         
-        btn_import = tk.Button(self, text="Import Dữ Liệu", font=("Arial", 10, "bold"), bg="#4CAF50", fg="white", width=15, command=self.on_import)
-        btn_import.pack(pady=20)
+        btn_import = tk.Button(frame_action, text="Import Dữ Liệu", font=("Arial", 10, "bold"), bg="#4CAF50", fg="white", command=self.on_import)
+        btn_import.pack(side="left", padx=15)
         
+    def format_money(self, amount):
+        if not amount: return "0"
+        return "{:,.0f}".format(amount).replace(",", ".")
+
+    def on_search(self):
+        start_str = self.entry_start.get().strip()
+        end_str = self.entry_end.get().strip()
+        
+        import datetime
+        try:
+            start_date = datetime.datetime.strptime(start_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+            end_date = datetime.datetime.strptime(end_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+        except Exception:
+            messagebox.showerror("Lỗi", "Ngày tháng phải đúng định dạng dd/mm/yyyy")
+            return
+            
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+            
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Lấy số dư đầu năm từ CdK
+            query_cdk = """
+                SELECT 
+                    SUM(ISNULL(Du_No0, 0)) - SUM(ISNULL(Du_Co0, 0)) AS Du_Dau_Nam
+                FROM dbo.CdK 
+                WHERE RTRIM(Tk) = '11212'
+            """
+            cursor.execute(query_cdk)
+            row_cdk = cursor.fetchone()
+            du_dau_nam = float(row_cdk.Du_Dau_Nam) if row_cdk and row_cdk.Du_Dau_Nam else 0
+
+            # Lấy phát sinh từ đầu năm đến trước start_date
+            query_sd = """
+                SELECT 
+                    SUM(CASE WHEN RTRIM(Tk_No) = '11212' THEN Tien ELSE 0 END) - 
+                    SUM(CASE WHEN RTRIM(Tk_Co) = '11212' THEN Tien ELSE 0 END) AS Phat_Sinh
+                FROM dbo.SoCai
+                WHERE (RTRIM(Tk_No) = '11212' OR RTRIM(Tk_Co) = '11212') 
+                  AND Ngay_Ct < ?
+            """
+            cursor.execute(query_sd, (start_date,))
+            row_sd = cursor.fetchone()
+            phat_sinh = float(row_sd.Phat_Sinh) if row_sd and row_sd.Phat_Sinh else 0
+            
+            luy_ke = du_dau_nam + phat_sinh
+            
+            self.tree.insert("", "end", values=(
+                "", "", "SỐ DƯ ĐẦU KỲ", "", "", "", self.format_money(luy_ke)
+            ))
+            
+            query = """
+                SELECT 
+                    a.Ngay_Ct, 
+                    a.So_Ct, 
+                    dbo.fn_TCVNToUnicode(COALESCE(c.Ten_Dt, a.Ong_Ba, a.Ma_Dt0)) AS KhachHang, 
+                    dbo.fn_TCVNToUnicode(b.Dien_Giai) AS Dien_Giai, 
+                    CASE WHEN b.Tk_No = '11212' THEN b.Tien ELSE 0 END AS TienNo,
+                    CASE WHEN b.Tk_Co = '11212' THEN b.Tien ELSE 0 END AS TienCo
+                FROM dbo.CtT a
+                JOIN dbo.CtT0 b ON a.Stt = b.Stt
+                LEFT JOIN VTSYS.dbo.DmDt c ON a.Ma_Dt0 = c.Ma_Dt
+                WHERE a.Ma_Ct IN ('C3', 'C4') 
+                  AND (b.Tk_No = '11212' OR b.Tk_Co = '11212')
+                  AND a.Ngay_Ct >= ? AND a.Ngay_Ct <= ?
+                ORDER BY a.Ngay_Ct, a.So_Ct, a.Stt
+            """
+            cursor.execute(query, (start_date, end_date))
+            rows = cursor.fetchall()
+            
+            for r in rows:
+                tien_no = float(r.TienNo) if r.TienNo else 0
+                tien_co = float(r.TienCo) if r.TienCo else 0
+                luy_ke += (tien_no - tien_co)
+                
+                ngay_format = r.Ngay_Ct.strftime("%d/%m/%Y") if r.Ngay_Ct else ""
+                kh = r.KhachHang.strip() if r.KhachHang else ""
+                dg = r.Dien_Giai.strip() if r.Dien_Giai else ""
+                
+                self.tree.insert("", "end", values=(
+                    ngay_format, 
+                    r.So_Ct, 
+                    kh, 
+                    dg, 
+                    self.format_money(tien_no), 
+                    self.format_money(tien_co), 
+                    self.format_money(luy_ke)
+                ))
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi Database", str(e))
+        finally:
+            if 'conn' in locals() and conn:
+                conn.close()
+                
     def on_browse(self):
-        filepath = filedialog.askopenfilename(title="Chọn file Excel", filetypes=[("Excel files", "*.xlsx *.xls")])
+        filepath = filedialog.askopenfilename(title="Chọn file Excel", filetypes=[("Excel files", "*.xlsx *.xls *.xlsm")])
         if filepath:
             self.entry_file.delete(0, tk.END)
             self.entry_file.insert(0, filepath)
@@ -231,7 +381,14 @@ class App(tk.Tk):
             messagebox.showwarning("Cảnh báo", "Vui lòng chọn file Excel trước khi Import!")
             return
             
+        confirm = messagebox.askyesno("Xác nhận", "Bạn có chắc chắn muốn nạp dữ liệu từ file Excel này vào hệ thống không?")
+        if not confirm:
+            return
+            
         import_excel(filepath, username)
+        
+        # Tự động search lại để hiển thị dữ liệu vừa import nếu nó thuộc khoảng thời gian đang tra cứu
+        self.on_search()
 
 if __name__ == "__main__":
     app = App()
