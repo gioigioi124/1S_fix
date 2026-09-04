@@ -1061,3 +1061,100 @@ FROM CtBH0 d
 JOIN CtBH h ON h.Stt = d.Stt
 WHERE RTRIM(h.So_Ct) = '<SO_CT>';
 ```
+
+## 18. Tiêu Chuẩn Xử Lý File SCT Bị Phình Khi Patch Bằng Python
+
+### Hiện Tượng
+
+Sau khi dùng thư viện `dbf` Python để sửa file `.SCX` (DBF) / `.SCT` (FPT), file `.SCT` phình to hơn đáng kể so với dung lượng thực tế của dữ liệu.
+
+Ví dụ điển hình: patch thêm 256 bytes dữ liệu nhưng file `.SCT` tăng từ 169KB lên 199KB (+30KB).
+
+### Nguyên Nhân
+
+File `.SCT` là file **FPT** (memo) của Visual FoxPro. Thư viện `dbf` Python ghi FPT không tối ưu:
+- Cấp phát block mới ở cuối file thay vì tái sử dụng block cũ.
+- Không tự động thu hồi (compact) các block rỗng.
+- Kết quả: file phình nhưng **dữ liệu hoàn toàn chính xác**, chỉ bị lãng phí dung lượng.
+
+### Quy Trình Chuẩn Khi Patch Form
+
+Khi cần sửa form (`.SCX` / `.SCT`), thực hiện theo các bước sau:
+
+#### Bước 1: Backup
+
+Trước khi patch, luôn tạo backup:
+```python
+import shutil, datetime
+ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+shutil.copy2('FRM/ctbhd.scx', f'FRM/ctbhd.scx.bak_{ts}')
+shutil.copy2('FRM/ctbhd.SCT', f'FRM/ctbhd.SCT.bak_{ts}')
+```
+
+#### Bước 2: Patch bằng Python
+
+Dùng thư viện `dbf` để sửa nội dung file `.SCX` (DBF). File `.SCT` (FPT) tự động đi kèm.
+
+```python
+import dbf, shutil
+shutil.copy2('FRM/ctbhd.scx', 'scratch/_tmp.dbf')
+shutil.copy2('FRM/ctbhd.SCT', 'scratch/_tmp.fpt')
+t = dbf.Table('scratch/_tmp.dbf')
+t.open(mode=dbf.READ_WRITE)
+# ... sửa PROPERTIES, METHODS ...
+t.close()
+shutil.copy2('scratch/_tmp.dbf', 'FRM/ctbhd.scx')
+shutil.copy2('scratch/_tmp.fpt', 'FRM/ctbhd.SCT')
+```
+
+#### Bước 3: Nén FPT và Compile bằng VFP8
+
+Sau khi patch, file `.SCT` có thể bị phình. Dùng VFP8 để nén:
+
+```foxpro
+USE e:\1S2024\FRM\ctbhd.scx IN 0 EXCLUSIVE
+SELECT ctbhd_scx
+PACK
+USE
+COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+```
+
+**Giải thích:**
+- `PACK` — copy dữ liệu sang file tạm (FPT mới, gọn), xóa file cũ, đổi tên file tạm. Thu hồi toàn bộ block rỗng.
+- `COMPILE FORM` — biên dịch methods, chỉ thêm đúng lượng dữ liệu cần.
+
+Kết quả: file `.SCT` trở về kích thước chuẩn (chỉ tăng đúng phần dữ liệu mới).
+
+#### Bước 4: Kiểm tra
+
+Sau compile, kiểm tra dung lượng:
+```powershell
+Get-Item "FRM\ctbhd.SCT" | Select-Object Length
+```
+
+### Lưu Ý Quan Trọng
+
+- **Không bỏ qua bước PACK**: `COMPILE FORM` tự nó không nén FPT, chỉ ghi thêm dữ liệu mới.
+- **Luôn dùng `EXCLUSIVE`**: `PACK` yêu cầu quyền độc quyền trên table.
+- **Không dùng `vfp8.exe -t` để chạy**: VFP8 `-t` không hỗ trợ `USE`, `PACK`, `COMPILE FORM`. Phải mở VFP8 giao diện đồ họa và chạy script.
+- **Script mẫu** (`scratch\pack_and_compile_ctbhd.prg`):
+  ```foxpro
+  SET SAFETY OFF
+  SET TALK OFF
+  SET EXCLUSIVE ON
+
+  USE e:\1S2024\FRM\ctbhd.scx IN 0 ALIAS ctbhd_scx EXCLUSIVE
+  SELECT ctbhd_scx
+  PACK
+  USE IN ctbhd_scx
+  COMPILE FORM e:\1S2024\FRM\ctbhd.scx
+  RETURN
+  ```
+  Mở VFP8 → File → Open → chọn file `.prg` → Run.
+
+### Nguyên Tắc Chung
+
+- **Patch bằng Python** — nhanh, chính xác, dễ kiểm soát.
+- **Nén và Compile bằng VFP8** — VFP quản lý FPT chuẩn, không phình.
+- **Không sửa file `.SCT` nhị phân thủ công** — luôn thông qua `dbf` Python hoặc VFP.
+- **Xóa file tạm trong `scratch/` sau khi hoàn thành** — tránh lẫn với file gốc.
