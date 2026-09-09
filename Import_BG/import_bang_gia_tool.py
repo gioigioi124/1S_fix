@@ -49,6 +49,11 @@ def search_bg(from_date_str, to_date_str):
     finally:
         conn.close()
 
+def clean_string(series):
+    return series.apply(
+        lambda x: '' if pd.isna(x) else (str(int(x)) if isinstance(x, float) and x.is_integer() else str(x))
+    ).str.strip().str.upper().replace('NAN', '')
+
 def import_excel_update(filepath, selected_stt_list):
     try:
         df = pd.read_excel(filepath)
@@ -62,11 +67,6 @@ def import_excel_update(filepath, selected_stt_list):
             df.columns = ['Ma_Vt', 'Gia', 'CK']
         else:
             raise ValueError("File Excel cập nhật cần có ít nhất 3 cột (Mã Hàng, Giá, CK).")
-            
-        def clean_string(series):
-            return series.apply(
-                lambda x: '' if pd.isna(x) else (str(int(x)) if isinstance(x, float) and x.is_integer() else str(x))
-            ).str.strip().str.upper().replace('NAN', '')
             
         df['Ma_Vt'] = clean_string(df['Ma_Vt'])
         df['Gia'] = pd.to_numeric(df['Gia'], errors='coerce')
@@ -165,11 +165,6 @@ def import_excel_new(filepath):
         df.columns = ['Ngay_Ct', 'So_Ct', 'Ma_Dt', 'Ma_Vm', 'Ma_Vt', 'Gia', 'CK']
         
         total_rows = len(df)
-        
-        def clean_string(series):
-            return series.apply(
-                lambda x: '' if pd.isna(x) else (str(int(x)) if isinstance(x, float) and x.is_integer() else str(x))
-            ).str.strip().str.upper().replace('NAN', '')
         
         df['So_Ct'] = clean_string(df['So_Ct'])
         df['Ma_Dt'] = clean_string(df['Ma_Dt'])
@@ -301,11 +296,66 @@ def import_excel_new(filepath):
     except Exception as e:
         messagebox.showerror("Lỗi Xử lý Excel", f"Lỗi: {str(e)}")
 
+def delete_excel_items(filepath, selected_stt_list):
+    try:
+        df = pd.read_excel(filepath)
+        col = df.iloc[:, 4] if len(df.columns) >= 7 else df.iloc[:, 0]
+        ma_vt_list = [c for c in clean_string(col).drop_duplicates() if c]
+
+        if not ma_vt_list:
+            messagebox.showwarning("Cảnh báo", "Không tìm thấy mã hàng hóa nào trong file Excel!")
+            return
+
+        confirm = messagebox.askyesno(
+            "Xác nhận xóa",
+            f"Bạn có chắc chắn muốn XÓA {len(ma_vt_list)} mã hàng trong file Excel khỏi {len(selected_stt_list)} bảng giá đã chọn?\n\n"
+            f"⚠️ Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác!"
+        )
+        if not confirm:
+            return
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.fast_executemany = True
+        except:
+            pass
+
+        try:
+            cursor.execute("CREATE TABLE #TempDelVt (Ma_Vt varchar(16));")
+            cursor.execute("CREATE TABLE #TempDelStt (Stt char(20));")
+
+            cursor.executemany("INSERT INTO #TempDelVt (Ma_Vt) VALUES (?)", [(code,) for code in ma_vt_list])
+            cursor.executemany("INSERT INTO #TempDelStt (Stt) VALUES (?)", [(stt,) for stt in selected_stt_list])
+
+            sql_delete = """
+                SET NOCOUNT ON;
+                DELETE FROM dbo.BG0
+                WHERE Stt IN (SELECT Stt FROM #TempDelStt)
+                  AND Ma_Vt IN (SELECT Ma_Vt FROM #TempDelVt);
+                SELECT @@ROWCOUNT;
+            """
+            cursor.execute(sql_delete)
+            row = cursor.fetchone()
+            deleted_count = row[0] if row else 0
+
+            cursor.execute("DROP TABLE #TempDelVt; DROP TABLE #TempDelStt;")
+            conn.commit()
+
+            messagebox.showinfo("Kết quả", f"Đã xóa thành công {deleted_count} dòng mặt hàng khỏi {len(selected_stt_list)} bảng giá đã chọn!")
+        except Exception as e:
+            conn.rollback()
+            messagebox.showerror("Lỗi Database", f"Có lỗi xảy ra khi xóa dữ liệu:\n{str(e)}")
+        finally:
+            conn.close()
+    except Exception as e:
+        messagebox.showerror("Lỗi File Excel", f"Lỗi đọc file: {str(e)}")
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Tool Import Bảng Giá Excel - VP2014")
-        self.geometry("700x500")
+        self.geometry("720x520")
         self.resizable(False, False)
         
         self.eval('tk::PlaceWindow . center')
@@ -384,7 +434,7 @@ class App(tk.Tk):
         
         self.tree.pack(fill="both", expand=True, padx=10, pady=5)
         
-        lbl_hint = tk.Label(self.tab_update, text="* Gợi ý: Giữ phím Ctrl hoặc Shift click chuột để chọn nhiều bảng giá cùng lúc.\n* Lưu ý: Trước khi update hãy LƯU (Save) file Excel (bạn không cần phải thoát hẳn file).", fg="#555", justify="left")
+        lbl_hint = tk.Label(self.tab_update, text="* Gợi ý: Giữ phím Ctrl hoặc Shift click chuột để chọn nhiều bảng giá cùng lúc.\n* Cập Nhật: Thêm mới / cập nhật giá | Xóa Hàng Hóa: Xóa các mã hàng trong Excel khỏi các bảng giá đã chọn.", fg="#555", justify="left")
         lbl_hint.pack(fill="x", padx=10, pady=(0, 5))
         
         frame_actions = tk.Frame(self.tab_update)
@@ -407,13 +457,16 @@ class App(tk.Tk):
         frame_file.pack(fill="x", padx=10, pady=5)
         
         tk.Label(frame_file, text="File Excel:").pack(side="left")
-        self.entry_file_update = tk.Entry(frame_file, width=40)
+        self.entry_file_update = tk.Entry(frame_file, width=32)
         self.entry_file_update.pack(side="left", padx=5)
         
         btn_browse = tk.Button(frame_file, text="Chọn...", command=self.on_browse_update)
         btn_browse.pack(side="left", padx=5)
         
-        btn_update = tk.Button(frame_file, text="Cập Nhật", font=("Arial", 10, "bold"), bg="#FF9800", fg="white", width=12, command=self.on_update)
+        btn_delete = tk.Button(frame_file, text="Xóa Hàng Hóa", font=("Arial", 9, "bold"), bg="#D32F2F", fg="white", width=12, command=self.on_delete_items)
+        btn_delete.pack(side="right", padx=5)
+        
+        btn_update = tk.Button(frame_file, text="Cập Nhật", font=("Arial", 9, "bold"), bg="#FF9800", fg="white", width=11, command=self.on_update)
         btn_update.pack(side="right", padx=5)
 
     def on_browse_new(self):
@@ -633,6 +686,20 @@ class App(tk.Tk):
         confirm = messagebox.askyesno("Xác nhận", f"Bạn chuẩn bị thêm hàng hóa từ file Excel vào {len(stt_list)} bảng giá đã chọn.\nTiếp tục?")
         if confirm:
             import_excel_update(filepath, stt_list)
+
+    def on_delete_items(self):
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất 1 bảng giá trên danh sách để xóa hàng hóa!")
+            return
+            
+        filepath = self.entry_file_update.get().strip()
+        if not filepath:
+            messagebox.showwarning("Cảnh báo", "Vui lòng chọn file Excel chứa danh sách mã hàng hóa cần xóa!")
+            return
+            
+        stt_list = [self.tree.item(item, "values")[0] for item in selected_items]
+        delete_excel_items(filepath, stt_list)
 
 if __name__ == "__main__":
     app = App()

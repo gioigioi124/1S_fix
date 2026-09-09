@@ -175,3 +175,24 @@ Toàn bộ quá trình import được thiết kế tuân thủ nghiêm ngặt n
 - **Tự động tăng trưởng theo Tháng:** Mã chứng từ yêu cầu luôn cố định 6 chữ số (`000000`).
 - Khi import một loạt chứng từ của bất kỳ tháng nào, công cụ sẽ query lấy ra mã `So_Ct` (đã được ép kiểu `CAST(So_Ct AS INT)`) lớn nhất hiện tại của tháng đó.
 - Nếu là chứng từ đầu tiên của tháng, hệ thống cấp số `000001`. Nếu đã có chứng từ lớn nhất là `000128`, chứng từ từ file Excel sẽ bắt đầu tịnh tiến từ `000129`, `000130`... bảo đảm thứ tự phát sinh là nhất quán kể cả khi file Excel sắp xếp lộn xộn.
+
+---
+
+## 7. Tính năng Xóa Hàng Hóa khỏi Bảng Giá cũ từ Excel
+
+Nhằm hỗ trợ quản lý danh mục bảng giá nhanh chóng khi có các mặt hàng bị ngừng bán hoặc loại bỏ khỏi chính sách giá:
+
+- **Vị trí tích hợp:** Chung tab **"Cập Nhật Bảng Giá Cũ"**.
+- **Cấu trúc File Excel đầu vào:** Cố định và đồng bộ hoàn toàn với file tạo mới hoặc file cập nhật:
+  - Nếu dùng file chuẩn tạo mới (>= 7 cột): Tự động lấy **Cột E** (index 4 - Mã Hàng `Ma_Vt`).
+  - Nếu dùng file cập nhật (< 7 cột, ví dụ 3 cột hoặc 1 cột): Tự động lấy **Cột đầu tiên** (index 0 - Mã Hàng `Ma_Vt`).
+- **Cách thức hoạt động:**
+  1. Người dùng tìm kiếm và chọn một hoặc nhiều bảng giá trên danh sách (hỗ trợ chọn nhiều bằng phím `Shift` / `Ctrl`).
+  2. Chọn file Excel chứa danh sách các mã hàng hóa cần xóa.
+  3. Bấm nút **"Xóa Hàng Hóa"** (màu đỏ).
+  4. Hệ thống hiển thị hộp thoại xác nhận số lượng mã hàng và số lượng bảng giá bị ảnh hưởng để người dùng xác nhận thao tác.
+  5. Khi xác nhận, phần mềm đẩy toàn bộ danh sách mã hàng và danh sách bảng giá vào bảng tạm `#TempDelVt` và `#TempDelStt` trên SQL Server bằng `fast_executemany` (xử lý hàng chục ngàn mã chỉ mất vài mili-giây).
+  6. Thực thi lệnh `DELETE` bọc an toàn trong Transaction:
+     - Nếu thành công: Báo cáo số dòng mặt hàng thực tế đã xóa.
+     - Nếu xảy ra lỗi: Tự động Rollback 100%, bảo vệ an toàn dữ liệu.
+
