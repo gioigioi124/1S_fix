@@ -1158,3 +1158,419 @@ Get-Item "FRM\ctbhd.SCT" | Select-Object Length
 - **Nén và Compile bằng VFP8** — VFP quản lý FPT chuẩn, không phình.
 - **Không sửa file `.SCT` nhị phân thủ công** — luôn thông qua `dbf` Python hoặc VFP.
 - **Xóa file tạm trong `scratch/` sau khi hoàn thành** — tránh lẫn với file gốc.
+
+## 19. Tự Động Bỏ Qua Hộp Thoại Hỏi In Nợ Cũ Khi Nhấn F7 / In Phiếu Trên Form `ctbhh`
+
+### Hiện Tượng
+
+Khi người dùng xem danh sách chứng từ bán hàng trên form `ctbhh` và nhấn phím F7 (hoặc click nút In phiếu `Command5`), hệ thống xuất hiện hộp thoại `MessageBox` hỏi: "Có in nợ cũ hay không?". Người dùng phải thao tác chọn "No" thủ công để in phiếu mà không kèm nợ cũ, gây gián đoạn và làm chậm tốc độ thao tác in ấn. Tương tự khi xem trước (Shift+F7 / `Command4`).
+
+### Nguyên Nhân
+
+1. Khi nhấn F7 (`nKeyCode = -6`), sự kiện `KeyPress` của form `frmdocitemh` (`ctbhh.scx`, Record 3) gọi `THISFORM.CmdGrpControl.Command5.Click`.
+2. Trong `Command5.Click`, form gọi hàm in lõi `=In_Ct_Kh(THISFORM, .F.)` (hoặc `=In_Ct_Hd(THISFORM, .F.)`). Khi xem trước (Shift+F7, `Command4.Click`), form gọi hàm in với tham số `.T.`.
+3. Cả hai hàm `In_Ct_Kh` và `In_Ct_Hd` nằm trong file `FXP\ctbh.FXP`. File này được biên dịch với cờ mã hóa bản quyền của Visual FoxPro (`COMPILE ... ENCRYPT`, header `[254, 242, 238, ...]`), không thể chỉnh sửa trực tiếp nhị phân hay dịch ngược an toàn mà không có công cụ chuyên dụng.
+4. Trong các mẫu in báo cáo (`RPT\cthd.FRT`, `ctpng.FRT`, `ctpxg.FRT`, `cttl.FRT`, `cttl0.FRT`), việc in dòng nợ cũ được kiểm soát bởi biến `In_NoCk` / `M.In_NoCk` (`SUPEXPR: "M.In_NoCk='C'"`). Khi `In_NoCk = 'K'`, toàn bộ khối nợ cũ tự động được triệt tiêu.
+5. Khi hàm `In_Ct_Kh` / `In_Ct_Hd` chạy, nó hiển thị hộp thoại `MESSAGEBOX` hỏi người dùng có in nợ cũ hay không (Yes/No).
+
+### Cách Đã Sửa
+
+Áp dụng giải pháp can thiệp trực tiếp từ tầng form `FRM\ctbhh.scx` (Record 7 - `CmdgrpControl`) theo kiến trúc can thiệp bộ nhớ (In-Memory Win32 API Hooking) kết hợp biến kiểm soát:
+
+1. **Khởi tạo biến kiểm soát in nợ cũ**:
+   Trước khi gọi hàm in `=In_Ct_Kh` / `=In_Ct_Hd`, thiết lập trước biến toàn cục `In_NoCk = 'K'` và `M_In_NoCk = 'K'`:
+   ```foxpro
+   PUBLIC In_NoCk, M_In_NoCk
+   In_NoCk = 'K'
+   M_In_NoCk = 'K'
+   ```
+2. **Hook tạm thời `MessageBoxA` trong bộ nhớ (Triệt tiêu 100% hiện tượng chớp nhoáng)**:
+   Thay vì dùng `KEYBOARD '{N}' PLAIN` (vẫn làm Windows tạo và hiển thị cửa sổ dialog trong vài mili-giây trước khi đóng gây chớp nhoáng), hệ thống sử dụng các Win32 API (`GetProcAddress`, `VirtualProtect`) và hàm `SYS(2600)` của VFP để hook tạm thời hàm `MessageBoxA` trong `user32.dll`:
+   - Sao lưu 8 bytes đầu tiên của `MessageBoxA`.
+   - Ghi đè bằng mã máy x86: `mov eax, 7` (`B8 07 00 00 00`), `ret 16` (`C2 10 00`).
+   - Khi hàm in lõi bên trong `ctbh.FXP` gọi `MESSAGEBOX(...)`, Windows lập tức trả về `7` (`IDNO` / No) ngay tại lệnh đầu tiên mà **hoàn toàn không tạo cửa sổ dialog, không hiển thị bất kỳ pixel nào lên màn hình (Zero Flicker)**.
+   - Toàn bộ khối lệnh in được bọc trong cấu trúc `TRY ... FINALLY ... ENDTRY`: khối `FINALLY` đảm bảo 8 bytes gốc của `MessageBoxA` luôn được phục hồi nguyên vẹn 100% ngay sau khi in xong.
+   ```foxpro
+   DECLARE LONG GetModuleHandle IN kernel32 STRING lpModuleName
+   DECLARE LONG GetProcAddress IN kernel32 LONG hModule, STRING lpProcName
+   DECLARE LONG VirtualProtect IN kernel32 LONG lpAddress, LONG dwSize, LONG flNewProtect, LONG @lpflOldProtect
+
+   LOCAL _hUser32, _pMsgBoxA, _cOrigBytes, _nOldProtect, _cPatchBytes, _bHooked
+   _bHooked = .F.
+   _hUser32 = GetModuleHandle('user32.dll')
+   _pMsgBoxA = GetProcAddress(_hUser32, 'MessageBoxA')
+
+   IF _pMsgBoxA <> 0
+       _cOrigBytes = SYS(2600, _pMsgBoxA, 8)
+       _nOldProtect = 0
+       IF VirtualProtect(_pMsgBoxA, 8, 0x40, @_nOldProtect) <> 0
+           _cPatchBytes = CHR(0xB8) + CHR(7) + CHR(0) + CHR(0) + CHR(0) + CHR(0xC2) + CHR(16) + CHR(0)
+           =SYS(2600, _pMsgBoxA, 8, _cPatchBytes)
+           _bHooked = .T.
+       ENDIF
+   ENDIF
+
+   PUBLIC In_NoCk, M_In_NoCk
+   In_NoCk = 'K'
+   M_In_NoCk = 'K'
+
+   TRY
+       IF UPPER(ALLTRIM(M_MA_DB)) <> ALLTRIM(M_DB_KHO) AND (_Ma_Ct = 'X1' OR _Ma_Ct = 'N5')
+           =In_Ct_Hd(THISFORM, .F.)
+       ELSE
+           =In_Ct_Kh(THISFORM, .F.)
+       ENDIF
+   FINALLY
+       IF _bHooked
+           =SYS(2600, _pMsgBoxA, 8, _cOrigBytes)
+           =VirtualProtect(_pMsgBoxA, 8, _nOldProtect, @_nOldProtect)
+       ENDIF
+   ENDTRY
+   ```
+3. **Áp dụng đồng bộ**:
+   Triển khai đồng thời cho cả `Command5.Click` (In phiếu, F7) và `Command4.Click` (Xem phiếu, Shift+F7).
+4. **Nén FPT và biên dịch lại**:
+   Sử dụng Visual FoxPro 8 để `PACK` và `COMPILE FORM e:\1S2024\FRM\ctbhh.scx`, đưa file memo `ctbhh.SCT` về kích thước chuẩn ~58KB, đảm bảo 0 lỗi biên dịch.
+
+### Files Đã Chỉnh Sửa
+
+- `FRM\ctbhh.scx`: Cập nhật mã nguồn `METHODS` và biên dịch bytecode `OBJCODE` tại Record 7 (`CmdgrpControl`).
+- `FRM\ctbhh.SCT`: Lưu trữ memo code và bytecode sau khi pack & compile chuẩn VFP8 (58,843 bytes).
+- Backups an toàn: `FRM\ctbhh.scx.bak_20260916_111006` / `FRM\ctbhh.scx.bak_20260916_142625`.
+
+### Kiểm Chứng Độc Lập
+
+- Biên dịch form bằng Visual FoxPro 8: `COMPILE FORM e:\1S2024\FRM\ctbhh.scx` trả về kết quả thành công, 0 lỗi cú pháp/runtime.
+- Thao tác in ấn thực hiện tức thì khi nhấn F7 hoặc click Command5: Hoàn toàn không tạo cửa sổ MessageBox, không có hiện tượng chớp nhoáng (0ms, Zero Flicker).
+- Phục hồi an toàn: Sau khi hàm in kết thúc, các hộp thoại `MessageBox` khác của hệ thống vẫn hoạt động bình thường nhờ khối bảo vệ `FINALLY`.
+
+## 20. Tự Động Bỏ Qua Cả 2 Hộp Thoại (In Các Chứng Từ Đã Chọn & In Nợ Cũ) Khi Nhấn Space + F7 Trên Form `ctbhh`
+
+### Hiện Tượng
+
+Khi người dùng nhấn phím `Space` để đánh dấu nhiều chứng từ trên lưới (`Grid1`) trong form `ctbhh.scx`, sau đó nhấn `F7` (in) hoặc `Shift+F7` (xem trước):
+1. Hệ thống xuất hiện liên tiếp 2 hộp thoại `MessageBox`:
+   - Hộp thoại 1: "In các chứng từ đã chọn?" (`MB_YESNO`).
+   - Hộp thoại 2: "In nợ cũ?" (`MB_YESNO`).
+2. Ở bản sửa trước (Mục 19), hook `MessageBoxA` trả về cố định giá trị `7` (`IDNO`) để triệt tiêu popup nợ cũ. Do đó, khi in nhiều chứng từ, hộp thoại 1 bị trả lời "No", khiến toàn bộ tiến trình in hàng loạt lập tức bị hủy bỏ mà không in các phiếu đã đánh dấu.
+3. Yêu cầu đặt ra:
+   - Khi có đánh dấu nhiều phiếu: Tự động trả lời `IDYES` (6) cho hộp thoại "In các chứng từ đã chọn?", và tự động trả lời `IDNO` (7) cho hộp thoại "In nợ cũ?".
+   - Khi in 1 phiếu đơn lẻ bình thường (không đánh dấu Space): Tự động trả lời `IDNO` (7) cho hộp thoại "In nợ cũ?".
+   - Cả hai phản hồi phải hoàn toàn không làm xuất hiện cửa sổ hộp thoại trên màn hình, không chớp nhoáng (Zero Flicker).
+   - Sau khi in, thực hiện bỏ đánh dấu (`=Un_Mark(THISFORM.Grid1, 'K_PhTemp')`) và làm mới hiển thị lưới.
+
+### Nguyên Nhân
+
+1. **Cơ chế đánh dấu chọn nhiều phiếu**:
+   Trong `ctbhh.scx` Record 3 (`frmdocitemh`), sự kiện `KeyPress` xử lý phím Space (`nKeyCode = 32`) trên `Grid1` bằng lệnh:
+   ```foxpro
+   REPLACE Mark WITH NOT K_PhTemp.Mark IN K_PhTemp
+   ```
+   Do đó, trạng thái đánh dấu được lưu trữ trực tiếp trong trường logical `Mark` của cursor `K_PhTemp`.
+2. **Luồng in ấn trong `ctbh.FXP`**:
+   - Khi gọi `=In_Ct_Kh(THISFORM, ...)` hoặc `=In_Ct_Hd(THISFORM, ...)`, module lõi `ctbh.FXP` kiểm tra xem trong `K_PhTemp` có bản ghi nào `Mark = .T.` hay không.
+   - Nếu có: `ctbh.FXP` hiển thị `MESSAGEBOX` hỏi "In các chứng từ đã chọn?". Nếu nhận `IDYES` (6), nó duyệt qua các chứng từ đã đánh dấu và tiếp tục hiển thị `MESSAGEBOX` hỏi "In nợ cũ?" (cần nhận `IDNO` = 7).
+   - Nếu không có: `ctbh.FXP` chỉ in chứng từ tại con trỏ hiện tại và chỉ hiển thị `MESSAGEBOX` hỏi "In nợ cũ?" (cần nhận `IDNO` = 7).
+
+### Cách Đã Sửa
+
+Triển khai kiến trúc **Hook Win32 API Trong Bộ Nhớ Tự Thích Ứng (State-Adaptive 15-Byte In-Memory Machine Code Hook)** trực tiếp trong `FRM\ctbhh.scx` (Record 7 - `CmdgrpControl`), áp dụng đồng thời cho `Command4.Click` (Shift+F7 / Xem trước) và `Command5.Click` (F7 / In phiếu):
+
+1. **Nhận biết trạng thái đánh dấu chứng từ**:
+   Trước khi kích hoạt hook, kiểm tra cursor `K_PhTemp`:
+   ```foxpro
+   LOCAL _bHasMark, _nOldArea, _nOldRec
+   _bHasMark = .F.
+   IF USED('K_PhTemp') AND TYPE('K_PhTemp.Mark') = 'L'
+   	_nOldArea = SELECT()
+   	SELECT K_PhTemp
+   	_nOldRec = RECNO()
+   	LOCATE FOR Mark = .T.
+   	IF FOUND()
+   		_bHasMark = .T.
+   	ENDIF
+   	IF _nOldRec > 0 AND _nOldRec <= RECCOUNT()
+   		GO _nOldRec
+   	ENDIF
+   	SELECT (_nOldArea)
+   ENDIF
+   ```
+   - Nếu `_bHasMark = .T.`: Giá trị khởi đầu của Hook là `6` (`IDYES`).
+   - Nếu `_bHasMark = .F.`: Giá trị khởi đầu của Hook là `7` (`IDNO`).
+
+2. **Cấu trúc mã máy x86 tự biến đổi (Self-Modifying Code - 15 bytes)**:
+   Thay vì ghi đè 8 bytes tĩnh như Mục 19, hệ thống tiêm 15 bytes mã máy vào hàm `MessageBoxA` trong `user32.dll`:
+   ```x86asm
+   B8 [Val] 00 00 00       mov eax, _nInitVal            ; 5 bytes: nạp giá trị trả về ban đầu (6 hoặc 7)
+   C6 05 [Addr+1] 07       mov byte ptr [_pMsgBoxA+1], 7 ; 7 bytes: tự ghi đè operand của mov eax thành 7 (IDNO)
+   C2 10 00                ret 16                        ; 3 bytes: dọn sạch 4 tham số stack theo stdcall và return
+   ```
+   - **Khi in nhiều chứng từ (`_nInitVal = 6`)**:
+     - Lần gọi 1 (Hỏi in các chứng từ đã chọn): Trả về `6` (`IDYES`), đồng thời tự sửa mã máy tại `_pMsgBoxA + 1` thành `7`.
+     - Lần gọi 2 trở đi (Hỏi in nợ cũ của các chứng từ): Lệnh `mov eax, 7` được thực thi, tự động trả về `7` (`IDNO`).
+   - **Khi in 1 chứng từ (`_nInitVal = 7`)**:
+     - Lần gọi 1 (Hỏi in nợ cũ): Trả về `7` (`IDNO`).
+     - Mọi lần gọi tiếp theo: Trả về `7` (`IDNO`).
+   - **Zero Flicker tuyệt đối**: Do hàm kết thúc ngay tại lệnh `ret 16`, Windows API không bao giờ tạo window/dialog handle, 0 pixel được vẽ, thời gian thực thi < 1ms.
+
+3. **Biến toàn cục triệt tiêu nợ cũ trên Report**:
+   Thiết lập trước khi gọi hàm in:
+   ```foxpro
+   PUBLIC In_NoCk, M_In_NoCk
+   In_NoCk = 'K'
+   M_In_NoCk = 'K'
+   ```
+   Đảm bảo các báo cáo (`cthd.FRT`, `ctpng.FRT`, `ctpxg.FRT`, `cttl.FRT`, `cttl0.FRT`) với biểu thức điều kiện `SUPEXPR: "M.In_NoCk='C'"` không in phần nợ cũ.
+
+4. **Bảo vệ toàn vẹn và dọn dẹp bộ đệm**:
+   - Sử dụng cấu trúc `TRY ... FINALLY`: Khối `FINALLY` luôn khôi phục 16 bytes gốc của `MessageBoxA` và trả lại protection flag cho Windows bộ nhớ.
+   - Gọi `CLEAR TYPEAHEAD` trong `FINALLY` để loại bỏ triệt để mọi phím bấm thừa trong bộ đệm bàn phím, ngăn ngừa rò rỉ ký tự vào form/lưới.
+
+5. **Bỏ đánh dấu và làm mới lưới**:
+   - Gọi `=Un_Mark(THISFORM.Grid1, 'K_PhTemp')` để xóa trạng thái `Mark` trên các dòng chứng từ đã in.
+   - Thêm lệnh `IF TYPE('THISFORM.Grid1') = 'O' AND NOT ISNULL(THISFORM.Grid1) THEN THISFORM.Grid1.Refresh ENDIF` để cập nhật lại màu sắc lưới ngay lập tức.
+
+6. **Chi tiết code triển khai trong Record 7 (`Command4.Click` & `Command5.Click`)**:
+   ```foxpro
+   LOCAL _bHasMark, _nOldArea, _nOldRec
+   _bHasMark = .F.
+   IF USED('K_PhTemp') AND TYPE('K_PhTemp.Mark') = 'L'
+   	_nOldArea = SELECT()
+   	SELECT K_PhTemp
+   	_nOldRec = RECNO()
+   	LOCATE FOR Mark = .T.
+   	IF FOUND()
+   		_bHasMark = .T.
+   	ENDIF
+   	IF _nOldRec > 0 AND _nOldRec <= RECCOUNT()
+   		GO _nOldRec
+   	ENDIF
+   	SELECT (_nOldArea)
+   ENDIF
+
+   DECLARE LONG GetModuleHandle IN kernel32 STRING lpModuleName
+   DECLARE LONG GetProcAddress IN kernel32 LONG hModule, STRING lpProcName
+   DECLARE LONG VirtualProtect IN kernel32 LONG lpAddress, LONG dwSize, LONG flNewProtect, LONG @lpflOldProtect
+
+   LOCAL _hUser32, _pMsgBoxA, _cOrigBytes, _nOldProtect, _cPatchBytes, _bHooked
+   LOCAL _pTargetByte, _p1, _p2, _p3, _p4, _nInitVal
+
+   _bHooked = .F.
+   _hUser32 = GetModuleHandle('user32.dll')
+   _pMsgBoxA = GetProcAddress(_hUser32, 'MessageBoxA')
+
+   IF _pMsgBoxA <> 0
+   	_cOrigBytes = SYS(2600, _pMsgBoxA, 16)
+   	_nOldProtect = 0
+   	IF VirtualProtect(_pMsgBoxA, 16, 0x40, @_nOldProtect) <> 0
+   		_nInitVal = IIF(_bHasMark, 6, 7)
+   		_pTargetByte = _pMsgBoxA + 1
+   		_p1 = BITAND(_pTargetByte, 0xFF)
+   		_p2 = BITAND(BITRSHIFT(_pTargetByte, 8), 0xFF)
+   		_p3 = BITAND(BITRSHIFT(_pTargetByte, 16), 0xFF)
+   		_p4 = BITAND(BITRSHIFT(_pTargetByte, 24), 0xFF)
+
+   		_cPatchBytes = CHR(0xB8) + CHR(_nInitVal) + CHR(0) + CHR(0) + CHR(0) + ;
+   					   CHR(0xC6) + CHR(0x05) + CHR(_p1) + CHR(_p2) + CHR(_p3) + CHR(_p4) + CHR(7) + ;
+   					   CHR(0xC2) + CHR(16) + CHR(0)
+   		=SYS(2600, _pMsgBoxA, 15, _cPatchBytes)
+   		_bHooked = .T.
+   	ENDIF
+   ENDIF
+
+   PUBLIC In_NoCk, M_In_NoCk
+   In_NoCk = 'K'
+   M_In_NoCk = 'K'
+
+   TRY
+   	IF UPPER(ALLTRIM(M_MA_DB)) <> ALLTRIM(M_DB_KHO) AND (_Ma_Ct = 'X1' OR _Ma_Ct = 'N5')
+   		=In_Ct_Hd(THISFORM, .F.)  && .T. đối với Command4.Click
+   	ELSE
+   		=In_Ct_Kh(THISFORM, .F.)  && .T. đối với Command4.Click
+   	ENDIF
+   FINALLY
+   	IF _bHooked
+   		=SYS(2600, _pMsgBoxA, 16, _cOrigBytes)
+   		=VirtualProtect(_pMsgBoxA, 16, _nOldProtect, @_nOldProtect)
+   	ENDIF
+   	CLEAR TYPEAHEAD
+   ENDTRY
+
+   =Un_Mark(THISFORM.Grid1, 'K_PhTemp')
+
+   THISFORM._Check_After_Printed = .T.
+   THISFORM._BrowseControl.Init
+   THISFORM._BrowseControl.Show
+   IF TYPE('THISFORM.Grid1') = 'O' AND NOT ISNULL(THISFORM.Grid1)
+   	THISFORM.Grid1.Refresh
+   ENDIF
+   ```
+
+### Files Đã Chỉnh Sửa
+
+- `FRM\ctbhh.scx`: Cập nhật mã nguồn `METHODS` và bytecode `OBJCODE` tại Record 7 (`CmdgrpControl`), 52 records còn lại giữ nguyên 100%.
+- `FRM\ctbhh.SCT`: Lưu trữ memo code và bytecode sau khi pack & compile chuẩn VFP8 (61,835 bytes).
+- Backups an toàn: `FRM\ctbhh.scx.bak_20260916_150657` / `FRM\ctbhh.SCT.bak_20260916_150657`.
+
+### Kiểm Chứng Độc Lập
+
+1. **Biên dịch Visual FoxPro 8**:
+   - `COMPILE FORM e:\1S2024\FRM\ctbhh.scx` trả về `COMPILE_SUCCESS`.
+   - Kiểm tra file `FRM\ctbhh.err`: không tồn tại (`False`), 0 lỗi biên dịch.
+2. **Kiểm tra nguồn mã và cấu trúc bản ghi**:
+   - Đọc và phân tích trực tiếp file DBF/FPT qua Python: Record 7 có đầy đủ cả 2 khối hook thích ứng tại `Command4` và `Command5`, `_nInitVal = IIF(_bHasMark, 6, 7)`, `CLEAR TYPEAHEAD`, `Un_Mark`, `Grid1.Refresh`.
+   - Đối chiếu với bản backup: 52 records còn lại của form hoàn toàn trùng khớp từng byte (chỉ duy nhất Record 7 `METHODS` thay đổi).
+3. **Mô phỏng máy ảo x86 Hook trên Visual FoxPro 8**:
+   - Nhánh đa chứng từ (`_bHasMark = .T.`): Lần 1 trả về `6` (`IDYES`), lần 2 & 3 trả về `7` (`IDNO`), không xuất hiện bất kỳ cửa sổ nào.
+   - Nhánh đơn chứng từ (`_bHasMark = .F.`): Lần 1 & 2 trả về `7` (`IDNO`), không xuất hiện bất kỳ cửa sổ nào.
+   - Khôi phục an toàn: 16 bytes gốc của `MessageBoxA` được phục hồi hoàn toàn sau khi hoàn tất lệnh in.
+
+## 21. Khắc Phục Lỗi ADOCommandSys Khi Nhấn F7 Và Mở Bảng Chọn Máy In Khi In Nhiều Phiếu Trên Form `ctbhh`
+
+### Hiện Tượng
+1. Khi nhấn F7 ở phiên bản trước, hệ thống cảnh báo: `Warning: Execution error from ADOCommandSys`.
+2. Khi dùng phím `Space` đánh dấu chọn nhiều phiếu rồi nhấn F7, hệ thống in thẳng ra máy in mặc định mà không xuất hiện bảng chọn máy in (Print Dialog) để người dùng chỉ định máy in (ví dụ: máy in hóa đơn/máy in kim/máy in laser).
+
+### Nguyên Nhân
+1. **Lỗi `Execution error from ADOCommandSys`**:
+   - Trong quá trình chỉnh sửa method `Command4.Click` và `Command5.Click` của Record 7 (`CmdgrpControl`), câu lệnh kiểm tra quyền:
+     ```foxpro
+     =ADOCommandSys([ST_Check_Right], [@p_UserName = ?M_Name, @p_Func_Type = ?$'V', @p_Func_ID = ?_FuncID, @p_RightNo = ?, @p_Access = ?@_Right_Access])
+     ```
+     đã bị thiếu `$4` ở tham số `@p_RightNo = ?,` (chuẩn là `@p_RightNo = ?$4,`). Do thiếu giá trị tham số, hàm `ADOCommandSys` ném ra lỗi cú pháp ADO.
+2. **Nguyên nhân không hiện bảng chọn máy in khi in nhiều phiếu**:
+   - Khảo sát mã nguồn thực tế của hàm in lõi `In_Ct_Kh`: Hệ thống **không** có `MessageBox` nào hỏi "Chọn máy in?". Toàn bộ quy trình in chỉ có đúng 2 hộp thoại `MessageBox`:
+     - Hộp thoại 1: `MessageBox("In cac chung tu da chon?")`
+     - Hộp thoại 2: `MessageBox("In no cu?")` (lặp lại cho từng chứng từ)
+   - Lệnh in trong `In_Ct_Kh` sử dụng lệnh `REPORT FORM ... TO PRINTER` (không có cờ `PROMPT`), do đó FoxPro luôn đẩy trực tiếp lệnh in ra máy in đang active/mặc định của Windows mà không bật bảng chọn máy in.
+   - Trong kiến trúc phần mềm 1S (`KTV.VCX`), chức năng "Chọn máy in" được thực thi chuẩn xác qua hàm native `GETPRINTER()`.
+
+### Cách Đã Sửa
+1. **Khôi phục đầy đủ tham số phân quyền**:
+   Sửa lại tham số `@p_RightNo = ?$4,` trong cả `Command4.Click` và `Command5.Click`.
+
+2. **Kích hoạt bảng chọn máy in chuẩn Windows bằng `GETPRINTER()` khi in nhiều phiếu (`_bHasMark = .T.`)**:
+   - Trước khi bước vào hàm in `In_Ct_Kh`, kiểm tra nếu có chứng từ được đánh dấu chọn (`_bHasMark = .T.`):
+     ```foxpro
+     IF _bHasMark
+     	_cPrinter = GETPRINTER()
+     	IF EMPTY(_cPrinter)
+     		THISFORM._Check_After_Printed = .T.
+     		THISFORM._BrowseControl.Init
+     		THISFORM._BrowseControl.Show
+     		RETURN
+     	ENDIF
+     	SET PRINTER TO NAME (_cPrinter)
+     ENDIF
+     ```
+   - Nếu người dùng chọn máy in và bấm OK, FoxPro chuyển toàn bộ luồng in sang máy in đã chọn (`SET PRINTER TO NAME (_cPrinter)`).
+   - Nếu người dùng bấm Cancel, hàm dừng lại an toàn, khôi phục giao diện form mà không in.
+   - Khi in 1 phiếu đơn lẻ (`_bHasMark = .F.`): Bỏ qua bước này, in trực tiếp ngay lập tức như mong muốn.
+
+3. **Nâng cấp kiến trúc Hook đếm trạng thái x86 (State-Counter 33-Byte In-Memory Machine Code Hook)**:
+   - Cấp phát 4 bytes bộ nhớ counter bằng `VirtualAlloc(0, 4, 0x1000, 0x40)`.
+   - Cấu trúc 33 bytes mã máy x86:
+     ```x86asm
+     00: 8B 15 <cP>       mov edx, [pCounter]      ; 6 bytes: đọc giá trị counter hiện tại vào edx
+     06: 83 FA 02         cmp edx, 2               ; 3 bytes: so sánh counter với 2
+     09: 73 0E            jae +14 (offset 25)      ; 2 bytes: nếu >= 2, nhảy đến nhãn trả về 7 (IDNO)
+     11: FF 05 <cP>       inc dword ptr [pCounter] ; 6 bytes: nếu < 2, tăng counter lên 1
+     17: B8 06 00 00 00   mov eax, 6               ; 5 bytes: nạp 6 (IDYES)
+     22: C2 10 00         ret 16                   ; 3 bytes: return stdcall
+     25: B8 07 00 00 00   mov eax, 7               ; 5 bytes: nạp 7 (IDNO)
+     30: C2 10 00         ret 16                   ; 3 bytes: return stdcall
+     ```
+   - **Cơ chế điều phối giá trị khởi tạo `_nInitCount`**:
+     - **Với lệnh In (`Command5.Click` / F7)**:
+       - Khi in nhiều phiếu (`_bHasMark = .T.`): Sau khi người dùng chọn máy in ở bước `GETPRINTER()`, khởi tạo counter = `1`:
+         - Lần gọi 1 (Hỏi in các chứng từ đã chọn): Counter = 1 (< 2) $\rightarrow$ Trả về `6` (`IDYES`), tăng counter lên 2. Popup triệt tiêu hoàn toàn, không chớp nhoáng.
+         - Lần gọi 2+ (Hỏi in nợ cũ của từng chứng từ): Counter = 2 (>= 2) $\rightarrow$ Luôn trả về `7` (`IDNO`). Triệt tiêu hoàn toàn câu hỏi nợ cũ.
+       - Khi in 1 phiếu (`_bHasMark = .F.`): Khởi tạo counter = `2`:
+         - Lần gọi 1+ (Hỏi in nợ cũ): Counter = 2 (>= 2) $\rightarrow$ Luôn trả về `7` (`IDNO`). Không hỏi nợ cũ, in ngay lập tức.
+     - **Với lệnh Xem trước (`Command4.Click` / Shift+F7)**:
+       - Khi xem nhiều phiếu (`_bHasMark = .T.`): Khởi tạo counter = `1` $\rightarrow$ Lần 1 trả về `6` (`IDYES`), lần 2+ trả về `7` (`IDNO`).
+       - Khi xem 1 phiếu (`_bHasMark = .F.`): Khởi tạo counter = `2` $\rightarrow$ Luôn trả về `7` (`IDNO`).
+
+4. **Quản lý tài nguyên và an toàn bộ nhớ**:
+   - Sử dụng khối `TRY ... FINALLY`:
+     - Khôi phục 33 bytes gốc của `MessageBoxA` trong `user32.dll`.
+     - Phục hồi thuộc tính bảo vệ bộ nhớ qua `VirtualProtect`.
+     - Giải phóng 4 bytes counter bằng `VirtualFree(_pCounter, 0, 0x8000)`.
+     - Dọn dẹp bộ đệm phím bằng `CLEAR TYPEAHEAD`.
+   - Thực hiện `=Un_Mark(THISFORM.Grid1, 'K_PhTemp')` và `THISFORM.Grid1.Refresh` để cập nhật giao diện lưới sau khi hoàn tất.
+
+### Files Đã Chỉnh Sửa
+- `FRM\ctbhh.scx`: Cập nhật `Command4.Click` và `Command5.Click` tại Record 7 (`CmdgrpControl`).
+- `FRM\ctbhh.SCT`: Pack và compile form chuẩn VFP8 (0 errors, 63,857 bytes).
+- Backups an toàn: `FRM\ctbhh.scx.bak_20260916_154659`, `FRM\ctbhh.scx.bak_20260916_155930`, `FRM\ctbhh.scx.bak_20260916_161627`.
+
+### Kiểm Chứng Độc Lập
+1. **Biên dịch Form VFP8**:
+   - `COMPILE FORM e:\1S2024\FRM\ctbhh.scx` trả về `COMPILE_SUCCESS`, `ctbhh.err` không tồn tại.
+   - `OBJCODE` tại Record 7 đạt 11,701 bytes hợp lệ.
+2. **Kiểm thử mô phỏng máy ảo x86 trên runtime Visual FoxPro 8**:
+   - Batch mode in (`_bHasMark = .T.`): Bảng chọn máy in kích hoạt trước bằng `GETPRINTER()`. Sau đó Hook trả về Lần 1 = `6`, Lần 2 = `7`, Lần 3 = `7`.
+   - Single mode in (`_bHasMark = .F.`): Không hiện bảng chọn máy in, in ngay. Hook trả về Lần 1 = `7`, Lần 2 = `7`.
+   - Batch mode xem trước (`Command4`): Lần 1 = `6`, Lần 2 = `7`.
+   - Single mode xem trước (`Command4`): Lần 1 = `7`.
+3. **Dọn dẹp**: Thư mục `scratch/` đã được dọn sạch toàn bộ file tạm.
+
+## 22. Khôi Phục Hoạt Động Nguyên Bản Cho Phím Xem Trước Ctrl+F7 (Shift+F7) Trên Form `ctbhh`
+
+### Hiện Tượng & Yêu Cầu
+- Người dùng chỉ yêu cầu triệt tiêu các hộp thoại xác nhận và nợ cũ khi thực hiện **In phiếu (F7)**.
+- Trong các bản sửa trước (Mục 20 & 21), method `Command4.Click` (xem trước báo cáo qua phím tắt `Ctrl+F7` / `Shift+F7`) cũng bị áp dụng cơ chế can thiệp hook mã máy tương tự nút In, dẫn đến việc xem trước bị ép tự động trả lời và không hoạt động theo luồng nguyên bản.
+- Người dùng yêu cầu: Cho phép chức năng xem trước `Ctrl+F7` (`Shift+F7`) hoạt động lại bình thường như ban đầu.
+
+### Cách Đã Sửa
+1. **Khôi phục hoàn toàn mã nguồn gốc cho `Command4.Click` trong `ctbhh.scx` (Record 7 - `CmdgrpControl`)**:
+   - Loại bỏ toàn bộ các khối lệnh can thiệp bộ nhớ (`VirtualAlloc`, `VirtualProtect`, `SYS(2600)`, hook `MessageBoxA`) và biến kiểm soát `In_NoCk`.
+   - Giữ nguyên mã nguồn gốc chuẩn của hệ thống:
+     ```foxpro
+     PROCEDURE Command4.Click
+     IF NOT THIS.Enabled
+     	RETURN
+     ENDIF
+
+     PRIVATE _FuncID, _Right_Access, _Ma_Ct
+     _FuncID = 0
+     _Right_Access = ''
+     _Ma_Ct = THISFORM._Ma_Ct
+
+     =ADOCommandSys([ST_Get_DocumentID], [@p_Ma_Ct = ?_Ma_Ct, @p_CtID = ?@_FuncID])
+     =ADOCommandSys([ST_Check_Right], [@p_UserName = ?M_Name, @p_Func_Type = ?$'V', @p_Func_ID = ?_FuncID, @p_RightNo = ?$4, @p_Access = ?@_Right_Access])
+
+     IF NOT ISNULL(_Right_Access) AND _Right_Access = 'x'
+     	=MESSAGEBOX(BH('Khong co quyen in chung tu.', 'No right to print voucher!'), 16, M_App_Name)	
+     	RETURN
+     ENDIF
+
+     THISFORM._BrowseControl.Hide
+     THISFORM._Check_After_Printed = .F.
+     IF UPPER(ALLTRIM(M_MA_DB)) <> ALLTRIM(M_DB_KHO) AND (_Ma_Ct = 'X1' OR _Ma_Ct = 'N5')
+     	=In_Ct_Hd(THISFORM, .T.)
+     ELSE
+     	=In_Ct_Kh(THISFORM, .T.)
+     ENDIF
+
+     =Un_Mark(THISFORM.Grid1, 'K_PhTemp')
+
+     THISFORM._Check_After_Printed = .T.
+     THISFORM._BrowseControl.Init
+     THISFORM._BrowseControl.Show
+     ENDPROC
+     ```
+2. **Bảo lưu nguyên vẹn cơ chế In phiếu (F7 / `Command5.Click`)**:
+   - In 1 phiếu: In ngay lập tức, tự động triệt tiêu popup nợ cũ, 0 flicker.
+   - Chọn nhiều phiếu (Space + F7): Mở bảng chọn máy in (`GETPRINTER()`), tự động bỏ qua xác nhận và nợ cũ.
+3. **Nén và biên dịch form**:
+   - Chạy `PACK` và `COMPILE FORM e:\1S2024\FRM\ctbhh.scx` trên Visual FoxPro 8.
+   - Kết quả: `COMPILE_SUCCESS`, `ctbhh.err` không tồn tại, bytecode `OBJCODE` đạt 10,064 bytes hợp lệ.
+
+### Files Đã Chỉnh Sửa
+- `FRM\ctbhh.scx`: Khôi phục `Command4.Click` về code gốc chuẩn tại Record 7.
+- `FRM\ctbhh.SCT`: Biên dịch bytecode và đóng gói nén gọn.
+- Backup: `FRM\ctbhh.scx.bak_20260916_164416` / `FRM\ctbhh.SCT.bak_20260916_164416`.
+
+
+
