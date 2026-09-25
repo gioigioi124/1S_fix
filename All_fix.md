@@ -7,7 +7,7 @@ Code của các form trong thư mục FRM đã được tổng hợp trong thư 
 
 # Ghi Chú Tổng Hợp Các Bản Sửa
 
-Ngày cập nhật: 2026-08-17
+Ngày cập nhật: 2026-09-25
 
 Tài liệu này tổng hợp các lỗi đã sửa trong đợt làm việc với form chứng từ bán hàng `FRM\ctbhd.scx` / `FRM\ctbhd.SCT`. Mục tiêu là để sau này có thể tham chiếu lại: lỗi là gì, nguyên nhân nằm ở đâu, đã sửa như thế nào, và những điều cần tránh để không lặp lại regression.
 
@@ -1024,7 +1024,7 @@ Sửa 2 điểm trên `FRM\ctbhd.scx` / `FRM\ctbhd.SCT`:
 
    ```foxpro
    REPLACE Tien_Nt4 WITH 0, Tien4 WITH 0, Tien_Nt2 WITH Tien_Nt9, Tien2 WITH Tien9, ;
-           Gia_Nt2 WITH Gia_Nt9, Gia2 WITH Gia9, Gia_Nt WITH Gia_Nt9, Gia WITH Gia9 IN K_CtTemp
+           Gia_Nt2 WITH Gia_Nt9, Gia2 WITH Gia9 IN K_CtTemp
    ```
 
 2. **`RECNO 59` — `Cmgnhan_huy1.Command1.Click` (nút Lưu)** — block normalize trước `Save_Ct()`:
@@ -1032,11 +1032,12 @@ Sửa 2 điểm trên `FRM\ctbhd.scx` / `FRM\ctbhd.SCT`:
      ```foxpro
      IF (Chiet_Khau = 0 OR BETWEEN(Gia_Nt9, 1, 10)) AND (Chiet_Khau <> 0 OR Tien_Nt4 <> 0 OR Tien4 <> 0 OR Tien_Nt2 <> Tien_Nt9 OR Tien2 <> Tien9 OR Gia_Nt2 <> Gia_Nt9 OR Gia2 <> Gia9)
      ```
-   - Bổ sung `Gia_Nt2/Gia2/Gia_Nt/Gia` vào `REPLACE`:
+   - Bổ sung `Gia_Nt2/Gia2` vào `REPLACE`:
      ```foxpro
-     REPLACE Chiet_Khau WITH 0, Tien_Nt4 WITH 0, Tien4 WITH 0, Tien_Nt2 WITH Tien_Nt9, Tien2 WITH Tien9, ;
-             Gia_Nt2 WITH Gia_Nt9, Gia2 WITH Gia9, Gia_Nt WITH Gia_Nt9, Gia WITH Gia9
+     REPLACE Chiet_Khau WITH 0, Tien_Nt4 WITH 0, Tien4 WITH 0, Tien_Nt2 WITH Tien_Nt9, Tien2 WITH Tien9
      ```
+
+**Cập nhật ngày 2026-09-25**: Đã revert phần ghi `Gia_Nt`/`Gia` (giá vốn) khỏi Fix #17. 4 cột `Gia_Nt`/`Gia`/`Tien_Nt`/`Tien` là cột giá vốn do hàm `Save_Ct` (compiled, không sửa được) thỉnh thoảng tự động tính. Fix #17 cũ gán `Gia_Nt = Gia_Nt9` (đơn giá bán) làm sai giá vốn. Giải pháp: chỉ giữ `Gia_Nt2`/`Gia2` (giá sau CK — là phần đúng của Fix #17), bỏ `Gia_Nt`/`Gia` (giá vốn) khỏi REPLACE ở cả RECNO 46 & 59. Chi tiết xem thêm mục 20.
 
 ### Quyết Định Nghiệp Vụ (Theo Yêu Cầu Người Dùng)
 
@@ -1387,6 +1388,33 @@ Triển khai kiến trúc **Hook Win32 API Trong Bộ Nhớ Tự Thích Ứng (S
    		=In_Ct_Hd(THISFORM, .F.)  && .T. đối với Command4.Click
    	ELSE
    		=In_Ct_Kh(THISFORM, .F.)  && .T. đối với Command4.Click
+
+## 21. Revert `Gia_Nt`/`Gia` (Giá Vốn) Khỏi Fix #17 Để Tránh Ghi Sai Giá Vốn
+
+### Hiện Tượng
+
+Fix #17 (bản sửa lỗi `Gia2`/`Gia_Nt2` khi CK về 0) đã thêm `Gia_Nt WITH Gia_Nt9, Gia WITH Gia9` vào REPLACE ở RECNO 46 & 59. Điều này vô tình gán giá vốn (`Gia_Nt`/`Gia`) bằng đơn giá bán (`Gia_Nt9`/`Gia9`), gây sai dữ liệu giá vốn trong bảng `CtBH0`.
+
+### Nguyên Nhân
+
+- 4 cột `Gia_Nt`/`Gia`/`Tien_Nt`/`Tien` trong `CtBH0` là cột **giá vốn** (cost price), không phải giá bán.
+- Hàm `Save_Ct` (compiled trong thư viện base class, không sửa được) **thỉnh thoảng** tự động tính giá vốn và ghi vào 4 cột này.
+- Fix #17 ghi `Gia_Nt = Gia_Nt9` (đơn giá bán) → khi lưu, giá vốn bị ghi bằng giá bán.
+
+### Cách Đã Sửa
+
+Ngày 2026-09-25: Revert 3 điểm trên `FRM\ctbhd.scx` / `FRM\ctbhd.SCT` — bỏ `Gia_Nt`/`Gia` khỏi Fix #17, chỉ giữ `Gia_Nt2`/`Gia2`:
+
+1. **RECNO 46** (`Chiet_Khau.LostFocus`): `REPLACE` bỏ `Gia_Nt WITH Gia_Nt9, Gia WITH Gia9`, giữ `Gia_Nt2 WITH Gia_Nt9, Gia2 WITH Gia9`
+2. **RECNO 59** (nút Lưu, điều kiện SCAN): revert về gốc (bỏ `OR Gia_Nt2 <> Gia_Nt9 OR Gia2 <> Gia9`)
+3. **RECNO 59** (nút Lưu, REPLACE): `REPLACE` bỏ `Gia_Nt2/Gia2/Gia_Nt/Gia`, revert về dòng gốc chỉ reset Tien_*
+
+### Kiểm Chứng
+
+- Dump xác nhận: RECNO 46 còn `Gia_Nt2 WITH Gia_Nt9, Gia2 WITH Gia9`, không còn `Gia_Nt/Gia`.
+- RECNO 59: điều kiện SCAN và REPLACE đã revert.
+- Compile OK bằng VFP8.
+- Không còn `So_Luong2/3`, `ActiveColumn` trong vùng sửa.`
    	ENDIF
    FINALLY
    	IF _bHooked
