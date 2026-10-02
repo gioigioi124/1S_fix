@@ -1600,5 +1600,69 @@ Ngày 2026-09-25: Revert 3 điểm trên `FRM\ctbhd.scx` / `FRM\ctbhd.SCT` — b
 - `FRM\ctbhh.SCT`: Biên dịch bytecode và đóng gói nén gọn.
 - Backup: `FRM\ctbhh.scx.bak_20260916_164416` / `FRM\ctbhh.SCT.bak_20260916_164416`.
 
+## 23. Khắc Phục Triệt Để Lỗi Nhảy Số Lượng & Thành Tiền Mặt Hàng Mút (Loại 2) Trên Form `ctbhd`
+
+### Hiện Tượng
+- Khi thủ kho dùng `ctbhd` xuất hàng dưới kho (`KH_2014`), đơn hàng lưu đúng với các mặt hàng Mút (`Loai_Vt = '2'`: `Số lượng bán = Số tấm * Hệ số độ dày`).
+- Khi kế toán tại văn phòng (`VP_2014`) dùng `cmdChonPhieuXuat` lấy đơn hàng lên form `ctbhd`, **thỉnh thoảng** hàng hóa có `Loai_Vt = '2'` bị nhảy số lượng về bằng số tấm (bỏ qua hệ số), hoặc thành tiền bị tính bằng Số tấm × Đơn giá.
+
+### Nguyên Nhân Gốc Rễ
+1. **Bẫy hàm `So_Luong2(THISFORM)`**:
+   - Trên lưới `Grid2` của `FRM\ctbhd.scx`, tại sự kiện `LostFocus` của cả 7 cột nhập liệu (Records 22, 24, 30, 32, 34, 42, 44), mã nguồn cũ chỉ kiểm tra `Loai_Vt = '3'`:
+     ```foxpro
+     IF K_CtTemp.Loai_Vt = '3'
+         =So_Luong3(THISFORM)
+     ELSE
+         =So_Luong2(THISFORM)
+     ENDIF
+     ```
+   - Đối với Mút (`Loai_Vt = '2'`), điều kiện `Loai_Vt = '3'` là `.F.`, hệ thống rơi vào nhánh `ELSE` gọi hàm compiled `=So_Luong2(THISFORM)`. Hàm này có logic ngầm mặc định: ép cứng `Hệ số = 1` và `Số lượng = Số tấm * 1`.
+2. **Bản chất "thỉnh thoảng xảy ra"**:
+   - Khi kế toán lấy đơn từ kho lên (`K_CtPx` -> `K_CtTemp`), dữ liệu ban đầu nạp lên là hoàn toàn chính xác.
+   - Nếu kế toán không click chuột hay tab vào dòng hàng trên `Grid2` mà bấm nút Lưu ngay: sự kiện `LostFocus` của 7 cột không chạy $\rightarrow$ Đơn hàng lưu đúng nguyên vẹn.
+   - Nếu kế toán click chuột vào dòng mút để xem, hoặc dùng phím Tab/Enter duyệt qua ô, hoặc vô tình active vào ô lưới: khi chuyển ô hoặc khi bấm Lưu (nút Lưu có lệnh `txtNgay_Ct.SetFocus()` để xả buffer), sự kiện `LostFocus` bị kích hoạt $\rightarrow$ Gọi `=So_Luong2(THISFORM)` $\rightarrow$ Hệ số bị xóa sổ, số lượng tụt về bằng số tấm.
+
+### Cách Đã Sửa (Thiết Kế Modular Tối Ưu Dung Lượng)
+Thay vì sao chép 100 dòng mã tính toán lặp lại vào cả 7 Record trên lưới `Grid2` (khiến dung lượng file `SCT` phình lên 211KB do trùng lặp mã nguồn và bytecode `OBJCODE`), hệ thống áp dụng thiết kế đóng gói hàm dùng chung (Modular Method):
+
+1. **Thêm phương thức dùng chung `Calc_Loai2` vào Form cấp cao (`frmdocitemd`, Record 3)**:
+   - Đăng ký tên phương thức `*calc_loai2` vào thuộc tính `reserved3`.
+   - Toàn bộ logic tính toán chuẩn cho hàng Mút được đặt tập trung trong `PROCEDURE Calc_Loai2`:
+     - `Số lượng bán = Số tấm * Hệ số độ dày`.
+     - Phân biệt nhập Đơn giá hay nhập ngược từ Thành tiền (`_VARREAD2 = 'TIEN_NT9'`).
+     - Tự động đồng bộ chiết khấu và tính lại dòng tổng thanh toán trên Header (`TTien_Nt2`, `TTien_Nt0`).
+     - Bảo toàn con trỏ bảng và vùng làm việc VFP, cập nhật hiển thị qua `THISFORM.Refresh()`.
+     - Giữ nguyên 100% các cột giá vốn (`Gia_Nt`, `Gia`, `Tien_Nt`, `Tien`) theo Fix #21.
+
+2. **Tại 7 Record trên `Grid2` (Record 22, 24, 30, 32, 34, 42, 44)**:
+   Chỉ gọi phương thức thông qua lệnh gọi hàm ngắn gọn (chỉ 7 dòng mã):
+   ```foxpro
+   DO CASE
+   	CASE K_CtTemp.Loai_Vt = '3'
+   		=So_Luong3(THISFORM)
+   	CASE K_CtTemp.Loai_Vt = '2'
+   		THISFORM.Calc_Loai2()
+   	OTHERWISE
+   		=So_Luong2(THISFORM)
+   ENDCASE
+   ```
+
+### Các Nguyên Tắc Đã Đảm Bảo
+1. **Không tác động vào SQL Server hay Database**: Toàn bộ thao tác chỉ can thiệp tầng giao diện form `FRM\ctbhd.scx`.
+2. **Bảo toàn 4 cột giá vốn**: `Gia_Nt`, `Gia`, `Tien_Nt`, `Tien` không bị can thiệp (tuân thủ Fix #21).
+3. **Tuân thủ quy trình nén và compile Rule 18**: Sử dụng Python `dbf` patch DBF/FPT, gọi `PACK` và `COMPILE FORM` qua Visual FoxPro 8.
+4. **Tối ưu dung lượng tuyệt đối**:
+   - Dung lượng SCT gốc: **173,953 bytes** (~170 KB).
+   - Bản nháp sao chép trùng lặp ban đầu: 216,023 bytes (211 KB).
+   - Bản tối ưu modular chính thức: **180,354 bytes** (~176 KB).
+   - Độ chênh lệch so với bản gốc chỉ là **+6.4 KB** (tương ứng đúng 1 bản khai báo logic và 7 lệnh gọi).
+
+### Files Đã Sửa Đổi & Backup
+- `FRM\ctbhd.scx`: Cập nhật Record 3 (`frmdocitemd`) và Records 22, 24, 30, 32, 34, 42, 44.
+- `FRM\ctbhd.SCT`: Memo methods và bytecode compiled VFP8 (180,354 bytes).
+- Backup an toàn: `FRM\ctbhd.scx.bak_20261002_105202` / `FRM\ctbhd.SCT.bak_20261002_105202`.
+- Kiểm tra biên dịch: `ctbhd.err` không tồn tại, 0 lỗi cú pháp.
+
+
 
 
