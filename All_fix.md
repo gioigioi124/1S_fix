@@ -7,7 +7,7 @@ Code của các form trong thư mục FRM đã được tổng hợp trong thư 
 
 # Ghi Chú Tổng Hợp Các Bản Sửa
 
-Ngày cập nhật: 2026-09-25
+Ngày cập nhật: 2026-10-17
 
 Tài liệu này tổng hợp các lỗi đã sửa trong đợt làm việc với form chứng từ bán hàng `FRM\ctbhd.scx` / `FRM\ctbhd.SCT`. Mục tiêu là để sau này có thể tham chiếu lại: lỗi là gì, nguyên nhân nằm ở đâu, đã sửa như thế nào, và những điều cần tránh để không lặp lại regression.
 
@@ -1663,6 +1663,102 @@ Thay vì sao chép 100 dòng mã tính toán lặp lại vào cả 7 Record trê
 - Backup an toàn: `FRM\ctbhd.scx.bak_20261002_105202` / `FRM\ctbhd.SCT.bak_20261002_105202`.
 - Kiểm tra biên dịch: `ctbhd.err` không tồn tại, 0 lỗi cú pháp.
 
+## 24. Khắc Phục Lỗi Gán Nhầm Địa Chỉ Khách Hàng Khi Có Đối Tác Trên Form `ctbhd`
 
+### Hiện Tượng
+- Khi người dùng lập chứng từ bán hàng trên form `FRM\ctbhd.scx`, tại ô mã khách hàng (`txtMa_Dt`) hoặc ô tên khách hàng (`txtTen_Dt`), khi chọn một đối tượng khách hàng mà trường `Doi_Tac` trong danh mục `DmDt` (cursor `M_DmDt`) có giá trị (không rỗng và không NULL):
+  - Ô "Ông/bà" (`Ong_Ba`) nhận giá trị người liên hệ / đối tác (`M_DmDt.Doi_Tac`) là đúng nghiệp vụ.
+  - Tuy nhiên, ô "Địa chỉ" (`Dia_Chi`) lại bị hiển thị và lưu thành **Tên khách hàng** (`m.Ten_Dt`) thay vì địa chỉ thực tế của khách hàng (`M_DmDt.Dia_Chi`).
+- Trường hợp khách hàng không có đối tác (`M_DmDt.Doi_Tac` là rỗng hoặc NULL): địa chỉ được gán đúng bằng `M_DmDt.Dia_Chi`, người liên hệ `Ong_Ba` nhận tên khách hàng `m.Ten_Dt`.
 
+### Nguyên Nhân Gốc Rễ
+1. **Lỗi gán nhầm biến trong nhánh `ELSE`**:
+   - Trong sự kiện chọn đối tượng của `txtMa_Dt` (Record 11) và `txtTen_Dt` (Record 50), đoạn mã kiểm tra `M_DmDt.Doi_Tac` có cấu trúc:
+     ```foxpro
+     IF ISNULL(M_DmDt.Doi_Tac) OR EMPTY(M_DmDt.Doi_Tac)
+         ... Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+     ELSE
+         ... Dia_Chi WITH m.Ten_Dt IN K_PhTemp1
+     ENDIF
+     ```
+   - Nhánh `ELSE` (khi đối tác có giá trị) đã viết nhầm lệnh gán trường `Dia_Chi`: thay vì lấy `M_DmDt.Dia_Chi`, mã nguồn lại gán `Dia_Chi WITH m.Ten_Dt IN K_PhTemp1`.
+   - Lỗi này khiến mọi khách hàng có thông tin đối tác/người liên hệ đều bị ghi đè địa chỉ bằng chính tên khách hàng, dẫn đến sai lệch thông tin địa chỉ giao hàng và in ấn chứng từ.
 
+### Chi Tiết Các Record Đã Sửa
+
+#### 1. Record 11 (`txtMa_Dt` - Sự kiện chọn mã đối tượng)
+- **Vị trí**: Dòng lệnh cập nhật `K_PhTemp1` sau khi lookup danh mục `M_DmDt`.
+- **Mã nguồn trước khi sửa**:
+  ```foxpro
+  	IF ISNULL(M_DmDt.Doi_Tac) OR EMPTY(M_DmDt.Doi_Tac)
+  		REPLACE Ma_Dt WITH m.Ma_Dt, Ten_Dt WITH m.Ten_Dt, Ong_Ba WITH m.Ten_Dt, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ELSE
+  		REPLACE Ma_Dt WITH m.Ma_Dt, Ten_Dt WITH m.Ten_Dt, Ong_Ba WITH M_DmDt.Doi_Tac, Dia_Chi WITH m.Ten_Dt IN K_PhTemp1
+  	ENDIF
+  ```
+- **Mã nguồn sau khi sửa**:
+  ```foxpro
+  	IF ISNULL(M_DmDt.Doi_Tac) OR EMPTY(M_DmDt.Doi_Tac)
+  		REPLACE Ma_Dt WITH m.Ma_Dt, Ten_Dt WITH m.Ten_Dt, Ong_Ba WITH m.Ten_Dt, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ELSE
+  		REPLACE Ma_Dt WITH m.Ma_Dt, Ten_Dt WITH m.Ten_Dt, Ong_Ba WITH M_DmDt.Doi_Tac, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ENDIF
+  ```
+
+#### 2. Record 50 (`txtTen_Dt` - Sự kiện chọn tên đối tượng)
+- **Vị trí**: Dòng lệnh cập nhật `K_PhTemp1` sau khi xác nhận tên khách hàng.
+- **Mã nguồn trước khi sửa**:
+  ```foxpro
+  	IF ISNULL(M_DmDt.Doi_Tac) OR EMPTY(M_DmDt.Doi_Tac)
+  		REPLACE Ong_Ba WITH m.Ten_Dt, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ELSE
+  		REPLACE Ong_Ba WITH M_DmDt.Doi_Tac, Dia_Chi WITH m.Ten_Dt IN K_PhTemp1
+  	ENDIF
+  ```
+- **Mã nguồn sau khi sửa**:
+  ```foxpro
+  	IF ISNULL(M_DmDt.Doi_Tac) OR EMPTY(M_DmDt.Doi_Tac)
+  		REPLACE Ong_Ba WITH m.Ten_Dt, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ELSE
+  		REPLACE Ong_Ba WITH M_DmDt.Doi_Tac, Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1
+  	ENDIF
+  ```
+
+### Quản Lý Dung Lượng SCT & Quy Chuẩn Biên Dịch (Rule 18)
+- **Quy trình thực hiện**:
+  1. Tạo bản sao lưu thời gian thực trước khi chỉnh sửa: `ctbhd.scx.bak_20261017_152406` và `ctbhd.SCT.bak_20261017_152406`.
+  2. Tạo bản sao tạm trong thư mục `scratch/`, thực hiện thay thế chuỗi chính xác qua thư viện Python `dbf` mà không làm thay đổi các method khác.
+  3. Sao chép trở lại `FRM/ctbhd.scx` và `FRM/ctbhd.SCT`.
+  4. Thực hiện thu hồi block rỗng (`PACK`) và biên dịch lại form (`COMPILE FORM e:\1S2024\FRM\ctbhd.scx`) bằng Visual FoxPro 8 thông qua script chuẩn `pack_and_compile_ctbhd.prg`.
+- **So sánh dung lượng**:
+  - Dung lượng `ctbhd.SCT` trước khi sửa: **180,354 bytes**.
+  - Dung lượng `ctbhd.SCT` ngay sau khi sửa memo bằng `dbf` (chưa PACK): **187,755 bytes** (+7.4 KB block thừa).
+  - Dung lượng `ctbhd.SCT` sau khi `PACK` và `COMPILE FORM`: **180,368 bytes** (~180 KB).
+  - Mức tăng thực tế sau tối ưu chỉ là **+14 bytes** (hoàn toàn tương thích với phần bytecode và chuỗi mã nguồn mới thay thế từ `m.Ten_Dt` thành `M_DmDt.Dia_Chi`), tuân thủ triệt để Quy tắc 18 về chống phình file FPT/SCT.
+- **Tình trạng biên dịch**:
+  - File lỗi `e:\1S2024\FRM\ctbhd.err` **không tồn tại** (0 lỗi cú pháp, 0 lỗi biên dịch).
+
+### Files Đã Chỉnh Sửa & Bản Sao Lưu (Backups)
+- **Files chính đã sửa**:
+  - `e:\1S2024\FRM\ctbhd.scx`: 12,805 bytes.
+  - `e:\1S2024\FRM\ctbhd.SCT`: 180,368 bytes.
+- **Bản sao lưu dự phòng (Backups)**:
+  - `e:\1S2024\FRM\ctbhd.scx.bak_20261017_152406`: 12,805 bytes.
+  - `e:\1S2024\FRM\ctbhd.SCT.bak_20261017_152406`: 180,354 bytes.
+- **Dọn dẹp môi trường**: Thư mục `e:\1S2024\scratch\` được dọn sạch hoàn toàn, không để lại file tạm.
+- **An toàn dữ liệu**: Tuyệt đối không can thiệp, không sửa đổi bất kỳ cấu trúc hay dữ liệu nào trong cơ sở dữ liệu SQL Server (0 DB modifications).
+
+### Kết Quả Kiểm Chứng Độc Lập
+Đã tiến hành kiểm tra độc lập tự động bằng script Python `dbf` trên toàn bộ form:
+1. **Record 11 (`txtMa_Dt`)**:
+   - `Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1`: **Đạt (Present)**.
+   - `Ong_Ba WITH M_DmDt.Doi_Tac`: **Đạt (Present & Intact)**.
+   - `Dia_Chi WITH m.Ten_Dt IN K_PhTemp1`: **Đạt (Completely Absent)**.
+2. **Record 50 (`txtTen_Dt`)**:
+   - `Dia_Chi WITH M_DmDt.Dia_Chi IN K_PhTemp1`: **Đạt (Present)**.
+   - `Ong_Ba WITH M_DmDt.Doi_Tac`: **Đạt (Present & Intact)**.
+   - `Dia_Chi WITH m.Ten_Dt IN K_PhTemp1`: **Đạt (Completely Absent)**.
+3. **Biên dịch & Kích thước**:
+   - `ctbhd.err`: Không xuất hiện (0 syntax errors).
+   - `ctbhd.SCT`: Đúng chuẩn 180,368 bytes.
+   - Backups: Tồn tại nguyên vẹn, sẵn sàng rollback nếu cần.
