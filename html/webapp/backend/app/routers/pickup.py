@@ -1,0 +1,40 @@
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query, status
+from app.services.pickup_service import pickup_service
+
+router = APIRouter(prefix="/api/pickup", tags=["Pickup"])
+
+@router.get("/list", response_model=dict)
+def list_pickup_slips(
+    ma_dt: Optional[str] = Query(None, description="Mã khách hàng cần lấy phiếu xuất"),
+    ngay_ct1: Optional[str] = Query(None, description="Từ ngày"),
+    ngay_ct2: Optional[str] = Query(None, description="Đến ngày")
+):
+    """
+    Danh sách phiếu xuất kho chưa lập hóa đơn từ CSDL KH_2014 (ListReadyToPickup / ctbhch.scx).
+    100% READ-ONLY.
+    """
+    slips = pickup_service.list_ready_to_pickup(ma_dt=ma_dt, ngay_ct1=ngay_ct1, ngay_ct2=ngay_ct2)
+    return {
+        "success": True,
+        "data": {
+            "items": [s.model_dump() for s in slips]
+        }
+    }
+
+@router.get("/detail/{stt}", response_model=dict)
+def get_pickup_detail(stt: str):
+    """
+    Chi tiết các mặt hàng trên phiếu xuất kho từ CSDL KH_2014 (DetailViewToPickup).
+    100% READ-ONLY.
+    """
+    detail = pickup_service.get_pickup_detail(stt)
+    if not detail:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "PICKUP_NOT_FOUND", "message": f"Không tìm thấy phiếu xuất kho {stt}."}
+        )
+    return {
+        "success": True,
+        "data": detail.model_dump()
+    }

@@ -7,7 +7,7 @@ node_modules/
 # Giữ lại .gitignore để git theo dõi chính file này
 !.gitignore
 
-# Giữ lại 4 file bạn yêu cầu:
+# Giữ lại các file FoxPro và công cụ hiện tại:
 !EXPORT_BANG_GIA_GUIDE.md
 !so_price_fix.FXP
 !/FRM/ctbhd.SCT
@@ -25,3 +25,59 @@ node_modules/
 !import_baoco_app/cai_dat_thu_vien.bat
 !import_baoco_app/chay_phan_mem.vbs
 !a_import_python_app.md
+
+# ==============================================================================
+# Ứng dụng Web trong thư mục html (mã nguồn, tài liệu, script)
+# ==============================================================================
+!/html/**
+
+# Loại trừ dependencies, cache, build artifacts và môi trường ảo để tải lên GitHub ổn định:
+# 1. Frontend dependencies & build outputs
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+**/dist-ssr/
+build/
+**/build/
+
+# 2. Python cache & Virtual environments
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+venv/
+**/venv/
+.venv/
+**/.venv/
+env/
+**/env/
+ENV/
+**/ENV/
+
+# 3. Biến môi trường & bí mật (Bảo mật - chỉ giữ lại .env.example mẫu)
+.env
+.env.*
+*.env.local
+**/.env
+**/.env.*
+!**/.env.example
+
+# 4. Logs, IDE và OS files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+**/.vscode/
+.idea/
+**/.idea/
+*.swp
+*.swo

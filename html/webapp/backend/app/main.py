@@ -1,0 +1,64 @@
+import logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+from app.database import test_db_connection
+from app.routers import lookups, vouchers, pickup, debt, print as print_router
+
+logging.basicConfig(
+    level=logging.INFO if settings.DEBUG else logging.WARNING,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("app.main")
+
+app = FastAPI(
+    title=settings.APP_NAME,
+    version="1.0.0",
+    description="Web App Quản lý Chứng từ Bán hàng 1S (Giai đoạn 1 - Read-Only)"
+)
+
+# CORS Middleware
+origins = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins if origins != ["*"] else ["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+# Mount Routers
+app.include_router(lookups.router)
+app.include_router(vouchers.router)
+app.include_router(pickup.router)
+app.include_router(debt.router)
+app.include_router(print_router.router)
+
+@app.get("/", tags=["Health"])
+def root():
+    return {
+        "success": True,
+        "app": settings.APP_NAME,
+        "phase": "Giai đoạn 1 (Read-Only)",
+        "version": "1.0.0",
+        "docs_url": "/docs"
+    }
+
+@app.get("/api/health", tags=["Health"])
+def health_check():
+    """
+    Health check endpoint verifying server status and database connectivity.
+    """
+    vp_conn = test_db_connection(settings.DB_VP)
+    kh_conn = test_db_connection(settings.DB_KH)
+    sys_conn = test_db_connection(settings.DB_SYS)
+
+    return {
+        "success": True,
+        "status": "healthy",
+        "databases": {
+            "VP_2014": vp_conn,
+            "KH_2014": kh_conn,
+            "VTSYS": sys_conn
+        }
+    }

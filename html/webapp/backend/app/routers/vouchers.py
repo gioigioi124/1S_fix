@@ -1,0 +1,77 @@
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query, status
+from app.services.voucher_service import voucher_service
+from app.services.calc_service import calc_service
+from app.schemas.calc import CalcRequest, CalcResponse
+from app.schemas.voucher import VoucherListResponse, VoucherDetailResponse
+
+router = APIRouter(prefix="/api/vouchers", tags=["Vouchers"])
+
+@router.get("", response_model=dict)
+def list_vouchers(
+    ma_ct: Optional[str] = Query("X1", description="Mã loại chứng từ (mặc định X1)"),
+    ngay_ct1: Optional[str] = Query(None, description="Từ ngày (YYYY-MM-DD)"),
+    ngay_ct2: Optional[str] = Query(None, description="Đến ngày (YYYY-MM-DD)"),
+    so_ct1: Optional[str] = Query(None, description="Từ số chứng từ"),
+    so_ct2: Optional[str] = Query(None, description="Đến số chứng từ"),
+    ma_dt: Optional[str] = Query(None, description="Mã khách hàng"),
+    ma_kho: Optional[str] = Query(None, description="Mã kho xuất"),
+    ma_vt: Optional[str] = Query(None, description="Mã vật tư trong chi tiết"),
+    ma_tte: Optional[str] = Query(None, description="Loại tiền tệ"),
+    page: int = Query(1, ge=1, description="Trang hiện tại"),
+    page_size: int = Query(50, ge=1, le=500, description="Kích thước trang")
+):
+    """
+    Danh sách chứng từ bán hàng (ctbhh). 100% READ-ONLY.
+    Hỗ trợ lọc đa tiêu chí, phân trang và dòng tổng cộng.
+    """
+    res = voucher_service.list_vouchers(
+        ma_ct=ma_ct,
+        ngay_ct1=ngay_ct1,
+        ngay_ct2=ngay_ct2,
+        so_ct1=so_ct1,
+        so_ct2=so_ct2,
+        ma_dt=ma_dt,
+        ma_kho=ma_kho,
+        ma_vt=ma_vt,
+        ma_tte=ma_tte,
+        page=page,
+        page_size=page_size
+    )
+    return {
+        "success": True,
+        "data": {
+            "items": [item.model_dump() for item in res.items],
+            "pagination": res.pagination.model_dump(),
+            "summary": res.summary.model_dump()
+        }
+    }
+
+@router.get("/{stt}", response_model=dict)
+def get_voucher_detail(stt: str):
+    """
+    Chi tiết 1 chứng từ bán hàng (ctbhd). 100% READ-ONLY.
+    Trả về toàn bộ 46 cột Header và mảng các dòng với 35 cột Detail.
+    """
+    voucher = voucher_service.get_voucher(stt)
+    if not voucher:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "VOUCHER_NOT_FOUND", "message": f"Không tìm thấy chứng từ có mã {stt}."}
+        )
+    return {
+        "success": True,
+        "data": voucher.model_dump()
+    }
+
+@router.post("/calc", response_model=dict)
+def calculate_voucher(req: CalcRequest):
+    """
+    Mô phỏng tính toán nghiệp vụ (Calc_Loai2, chiết khấu dòng/tổng, thuế VAT).
+    Tuyệt đối KHÔNG ghi dữ liệu vào CSDL.
+    """
+    res = calc_service.calculate_voucher(req)
+    return {
+        "success": True,
+        "data": res.model_dump()
+    }
