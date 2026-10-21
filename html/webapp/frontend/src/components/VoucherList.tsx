@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
-import { VoucherHeader, VoucherPagination, VoucherSummaryTotals, VoucherFilterParams } from '../types/voucher';
-import { Button } from './ui/Button';
-import { Badge } from './ui/Badge';
-import { formatCurrency, formatDate } from '../lib/format';
+import React, { useState } from "react";
+import {
+  VoucherHeader,
+  VoucherPagination,
+  VoucherSummaryTotals,
+  VoucherFilterParams,
+} from "../types/voucher";
+import { Button } from "./ui/Button";
+import { Badge } from "./ui/Badge";
+import { formatCurrency, formatDate } from "../lib/format";
 import {
   Eye,
   Filter,
@@ -13,7 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldAlert,
-} from 'lucide-react';
+} from "lucide-react";
 
 interface VoucherListProps {
   vouchers: VoucherHeader[];
@@ -48,7 +53,8 @@ export const VoucherList: React.FC<VoucherListProps> = ({
   onRefresh,
   onChangePage,
 }) => {
-  const activeVoucher = vouchers.find((v) => v.stt === selectedStt) || vouchers[0];
+  const activeVoucher =
+    vouchers.find((v) => v.stt === selectedStt) || vouchers[0];
 
   return (
     <div className="flex flex-col h-full bg-slate-100 pb-10">
@@ -62,12 +68,12 @@ export const VoucherList: React.FC<VoucherListProps> = ({
             disabled={!activeVoucher}
           >
             <Eye className="w-3.5 h-3.5 mr-1" />
-            Xem (F2 / Enter)
+            Xem chi tiết (Enter)
           </Button>
 
           <Button variant="outline" size="sm" onClick={onOpenFilter}>
             <Filter className="w-3.5 h-3.5 mr-1" />
-            Lọc (F3)
+            Lọc (F9)
           </Button>
 
           <Button
@@ -92,11 +98,18 @@ export const VoucherList: React.FC<VoucherListProps> = ({
             disabled={!activeVoucher}
           >
             <CreditCard className="w-3.5 h-3.5 mr-1 text-amber-600" />
-            Xem nợ (F6)
+            Chi tiết công nợ
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 mr-1 ${loading ? 'animate-spin' : ''}`} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 mr-1 ${loading ? "animate-spin" : ""}`}
+            />
             Làm mới
           </Button>
         </div>
@@ -108,12 +121,17 @@ export const VoucherList: React.FC<VoucherListProps> = ({
             <span>Lọc:</span>
             <strong className="text-primary-800">
               {filters?.ngay_ct1
-                ? `${formatDate(filters.ngay_ct1)}` + (filters.ngay_ct2 && filters.ngay_ct2 !== filters.ngay_ct1 ? ` → ${formatDate(filters.ngay_ct2)}` : '')
-                : 'Tất cả ngày'}
+                ? `${formatDate(filters.ngay_ct1)}` +
+                  (filters.ngay_ct2 && filters.ngay_ct2 !== filters.ngay_ct1
+                    ? ` → ${formatDate(filters.ngay_ct2)}`
+                    : "")
+                : "Tất cả ngày"}
             </strong>
             <span className="text-slate-400">|</span>
             <span>Loại:</span>
-            <strong className="text-primary-800">{filters?.ma_ct || 'X1'}</strong>
+            <strong className="text-primary-800">
+              {filters?.ma_ct || "X1"}
+            </strong>
           </span>
 
           <span className="flex items-center gap-1 text-amber-800 bg-amber-50 px-2 py-1 rounded border border-amber-200 font-semibold">
@@ -136,27 +154,30 @@ export const VoucherList: React.FC<VoucherListProps> = ({
                   <th className="vfp-header w-24">Mã KH</th>
                   <th className="vfp-header min-w-[200px]">Tên khách hàng</th>
                   <th className="vfp-header w-28">Người mua</th>
-                  <th className="vfp-header min-w-[200px]">Địa chỉ</th>
-                  <th className="vfp-header min-w-[200px]">Diễn giải</th>
-                  <th className="vfp-header w-14 text-center">Tiền tệ</th>
-                  <th className="vfp-header w-28 text-right">Tiền hàng (sau CK)</th>
                   <th className="vfp-header w-24 text-right">Thuế VAT</th>
-                  <th className="vfp-header w-32 text-right">Tổng thanh toán</th>
-                  <th className="vfp-header w-16 text-center">Trạng thái</th>
+                  <th className="vfp-header w-32 text-right">
+                    Tổng thanh toán
+                  </th>
                   <th className="vfp-header w-20 text-center">Người lập</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={14} className="px-4 py-12 text-center text-slate-400">
+                    <td
+                      colSpan={9}
+                      className="px-4 py-12 text-center text-slate-400"
+                    >
                       <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-primary-500" />
                       Đang tải danh sách chứng từ từ CSDL VP_2014...
                     </td>
                   </tr>
                 ) : vouchers.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="px-4 py-12 text-center text-slate-400 italic">
+                    <td
+                      colSpan={9}
+                      className="px-4 py-12 text-center text-slate-400 italic"
+                    >
                       Không tìm thấy chứng từ bán hàng nào phù hợp với bộ lọc.
                     </td>
                   </tr>
@@ -170,23 +191,27 @@ export const VoucherList: React.FC<VoucherListProps> = ({
                         onDoubleClick={() => onOpenDetail(v.stt)}
                         className={`cursor-pointer transition-colors border-b border-slate-200 ${
                           isSelected
-                            ? 'bg-amber-100/70 font-medium text-slate-900 border-l-4 border-l-primary-600'
-                            : 'hover:bg-slate-50'
+                            ? "bg-amber-100/70 font-medium text-slate-900 border-l-4 border-l-primary-600"
+                            : "hover:bg-slate-50"
                         }`}
                       >
                         <td className="vfp-cell text-center text-slate-400 font-mono">
-                          {(pagination.page - 1) * pagination.page_size + idx + 1}
+                          {(pagination.page - 1) * pagination.page_size +
+                            idx +
+                            1}
                         </td>
-                        <td className="vfp-cell font-mono font-bold text-primary-700">{v.so_ct || v.stt}</td>
-                        <td className="vfp-cell font-mono">{formatDate(v.ngay_ct)}</td>
+                        <td className="vfp-cell font-mono font-bold text-primary-700">
+                          {v.so_ct || v.stt}
+                        </td>
+                        <td className="vfp-cell font-mono">
+                          {formatDate(v.ngay_ct)}
+                        </td>
                         <td className="vfp-cell font-mono">{v.ma_dt}</td>
-                        <td className="vfp-cell font-medium">{v.ten_dt || '—'}</td>
-                        <td className="vfp-cell text-slate-600">{v.ong_ba || '—'}</td>
-                        <td className="vfp-cell text-slate-600 max-w-xs truncate">{v.dia_chi || '—'}</td>
-                        <td className="vfp-cell italic text-slate-600 max-w-xs truncate">{v.dien_giai0 || '—'}</td>
-                        <td className="vfp-cell text-center font-mono">{v.ma_tte}</td>
-                        <td className="vfp-cell text-right font-mono text-slate-800">
-                          {formatCurrency(v.ttien_nt2, v.ma_tte)}
+                        <td className="vfp-cell font-medium">
+                          {v.ten_dt || "—"}
+                        </td>
+                        <td className="vfp-cell text-slate-600">
+                          {v.ong_ba || "—"}
                         </td>
                         <td className="vfp-cell text-right font-mono text-sky-700">
                           {formatCurrency(v.ttien_nt3, v.ma_tte)}
@@ -194,15 +219,8 @@ export const VoucherList: React.FC<VoucherListProps> = ({
                         <td className="vfp-cell text-right font-mono font-bold text-emerald-700">
                           {formatCurrency(v.ttien_nt0, v.ma_tte)}
                         </td>
-                        <td className="vfp-cell text-center">
-                          {v.posted ? (
-                            <Badge variant="success">Sổ cái</Badge>
-                          ) : (
-                            <Badge variant="default">Nháp</Badge>
-                          )}
-                        </td>
                         <td className="vfp-cell text-center text-slate-500 font-mono text-[11px]">
-                          {v.user_name || 'KETOAN'}
+                          {v.user_name || "KETOAN"}
                         </td>
                       </tr>
                     );
@@ -217,16 +235,28 @@ export const VoucherList: React.FC<VoucherListProps> = ({
             {/* Totals */}
             <div className="flex items-center gap-4 font-mono font-semibold text-slate-700">
               <span>
-                Tổng số chứng từ: <strong className="text-slate-900">{pagination.total_records}</strong>
+                Tổng số chứng từ:{" "}
+                <strong className="text-slate-900">
+                  {pagination.total_records}
+                </strong>
               </span>
               <span>
-                Tiền hàng sau CK: <strong className="text-slate-900">{formatCurrency(summary.total_ttien_nt2)} đ</strong>
+                Tiền hàng sau CK:{" "}
+                <strong className="text-slate-900">
+                  {formatCurrency(summary.total_ttien_nt2)} đ
+                </strong>
               </span>
               <span>
-                Thuế GTGT: <strong className="text-sky-700">+{formatCurrency(summary.total_ttien_nt3)} đ</strong>
+                Thuế GTGT:{" "}
+                <strong className="text-sky-700">
+                  +{formatCurrency(summary.total_ttien_nt3)} đ
+                </strong>
               </span>
               <span>
-                Tổng thanh toán: <strong className="text-emerald-700 text-sm">{formatCurrency(summary.total_ttien_nt0)} đ</strong>
+                Tổng thanh toán:{" "}
+                <strong className="text-emerald-700 text-sm">
+                  {formatCurrency(summary.total_ttien_nt0)} đ
+                </strong>
               </span>
             </div>
 

@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
-import { useVouchers } from './hooks/useVouchers';
-import { useHotkeys } from './hooks/useHotkeys';
-import { VoucherList } from './components/VoucherList';
-import { VoucherForm } from './components/VoucherForm';
-import { FilterDialog } from './components/FilterDialog';
-import { PickupDialog } from './components/PickupDialog';
-import { DebtPanel } from './components/DebtPanel';
-import { PrintPreview } from './components/PrintPreview';
-import { HotkeyBar } from './components/HotkeyBar';
-import { Badge } from './components/ui/Badge';
-import { Database, User, ShieldCheck } from 'lucide-react';
+import React, { useState } from "react";
+import { useVouchers } from "./hooks/useVouchers";
+import { useHotkeys } from "./hooks/useHotkeys";
+import { VoucherList } from "./components/VoucherList";
+import { VoucherForm } from "./components/VoucherForm";
+import { FilterDialog } from "./components/FilterDialog";
+import { PickupDialog } from "./components/PickupDialog";
+import { DebtPanel } from "./components/DebtPanel";
+import { PrintPreview } from "./components/PrintPreview";
+import { HotkeyBar } from "./components/HotkeyBar";
+import { Badge } from "./components/ui/Badge";
+import { Database, User, ShieldCheck } from "lucide-react";
 
 export function App() {
   const {
@@ -47,39 +47,46 @@ export function App() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // VFP Keyboard Shortcuts Handler
+  // VFP Keyboard Shortcuts Handler (khớp ctbhh / ctbhd / ctbhch)
   useHotkeys({
-    onF2: () => {
-      if (selectedStt && !activeVoucher) {
-        handleOpenDetail(selectedStt);
-      }
-    },
-    onF3: () => {
-      setIsFilterOpen(true);
-    },
-    onF4: () => {
-      showToast('Tính năng Thêm mới (F4) bị khóa trong Giai đoạn 1 (100% Read-Only).');
-    },
+    // F2 = Thêm mới (ctbhh Command1) — khóa ở GĐ1
+    onF2: () =>
+      showToast("F2 - Thêm mới bị khóa trong Giai đoạn 1 (100% Read-Only)."),
+    onCtrlF2: () =>
+      showToast("Ctrl+F2 - Thêm mới (SaveAs) bị khóa trong Giai đoạn 1."),
+    // F3 = Sửa (ctbhh Command2) — khóa ở GĐ1
+    onF3: () =>
+      showToast(
+        "F3 - Sửa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
+      ),
+    onCtrlF3: () =>
+      showToast("Ctrl+F3 - Sửa mẫu in bị khóa trong Giai đoạn 1."),
+    // F6 = Nhập số IMEI — khóa ở GĐ1
+    onF6: () => showToast("F6 - Nhập số IMEI bị khóa trong Giai đoạn 1."),
+    // F7 = In chứng từ (ctbhh Command5)
     onF7: () => {
-      if (activeVoucher) {
-        handleOpenPrint(activeVoucher.stt);
-      } else if (selectedStt) {
-        handleOpenPrint(selectedStt);
-      }
+      if (activeVoucher) handleOpenPrint(activeVoucher.stt);
+      else if (selectedStt) handleOpenPrint(selectedStt);
+      else showToast("Chưa chọn chứng từ để in.");
     },
-    onCtrlF7: () => {
-      if (activeVoucher) {
-        handleOpenPrint(activeVoucher.stt);
-      } else if (selectedStt) {
-        handleOpenPrint(selectedStt);
-      }
+    // Shift+F7 / Ctrl+F7 = Xem trước (ctbhh Command4)
+    onPreview: () => {
+      if (activeVoucher) handleOpenPrint(activeVoucher.stt);
+      else if (selectedStt) handleOpenPrint(selectedStt);
+      else showToast("Chưa chọn chứng từ để xem trước.");
     },
-    onF8: () => {
-      showToast('Tính năng Xóa (F8) bị khóa trong Giai đoạn 1 (100% Read-Only).');
+    // F8 = Xóa (ctbhh Command3) — khóa ở GĐ1
+    onF8: () =>
+      showToast(
+        "F8 - Xóa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
+      ),
+    // F9 = Lọc chứng từ (ctbhh Command6)
+    onF9: () => setIsFilterOpen(true),
+    // Space = đánh dấu dòng (ctbhh KeyPress 32)
+    onSpace: () => {
+      if (selectedStt) setSelectedStt(selectedStt);
     },
-    onF9: () => {
-      setIsFilterOpen(true);
-    },
+    // Enter = mở chi tiết dòng đang chọn (tương đương double-click)
     onEnter: () => {
       if (!activeVoucher && selectedStt) {
         handleOpenDetail(selectedStt);
@@ -98,29 +105,52 @@ export function App() {
         handleCloseDetail();
       }
     },
+    onCtrlHome: () => {
+      if (vouchers.length > 0) setSelectedStt(vouchers[0].stt);
+    },
+    onCtrlEnd: () => {
+      if (vouchers.length > 0)
+        setSelectedStt(vouchers[vouchers.length - 1].stt);
+    },
   });
 
   const handleHotkeyBarAction = (actionId: string) => {
     switch (actionId) {
-      case 'VIEW':
-        if (selectedStt && !activeVoucher) handleOpenDetail(selectedStt);
+      case "NEW":
+        showToast("F2 - Thêm mới bị khóa trong Giai đoạn 1 (100% Read-Only).");
         break;
-      case 'FILTER':
-      case 'FILTER_VOUCHERS':
+      case "EDIT":
+        showToast(
+          "F3 - Sửa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
+        );
+        break;
+      case "IMEI":
+        showToast("F6 - Nhập số IMEI bị khóa trong Giai đoạn 1.");
+        break;
+      case "DELETE":
+        showToast(
+          "F8 - Xóa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
+        );
+        break;
+      case "FILTER":
         setIsFilterOpen(true);
         break;
-      case 'NEW':
-        showToast('Tính năng Thêm mới (F4) bị khóa trong Giai đoạn 1 (100% Read-Only).');
-        break;
-      case 'PRINT':
-      case 'PREVIEW':
+      case "PRINT":
+      case "PREVIEW":
         if (activeVoucher) handleOpenPrint(activeVoucher.stt);
         else if (selectedStt) handleOpenPrint(selectedStt);
+        else showToast("Chưa chọn chứng từ.");
         break;
-      case 'DELETE':
-        showToast('Tính năng Xóa (F8) bị khóa trong Giai đoạn 1 (100% Read-Only).');
+      case "TOGGLE_MARK":
+        if (selectedStt) setSelectedStt(selectedStt);
         break;
-      case 'ESCAPE':
+      case "SELECT_ALL":
+        if (vouchers.length > 0) setSelectedStt(vouchers[0].stt);
+        break;
+      case "DESELECT_ALL":
+        setSelectedStt(null);
+        break;
+      case "ESCAPE":
         if (isPrintOpen) setIsPrintOpen(false);
         else if (isDebtOpen) setIsDebtOpen(false);
         else if (isPickupOpen) setIsPickupOpen(false);
@@ -161,7 +191,9 @@ export function App() {
         <div className="flex items-center gap-4 text-xs text-slate-300">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[11px] font-mono text-slate-400">CSDL: VP_2014 & KH_2014</span>
+            <span className="text-[11px] font-mono text-slate-400">
+              CSDL: VP_2014 & KH_2014
+            </span>
           </div>
           <div className="flex items-center gap-1.5 bg-slate-800 px-2.5 py-1 rounded border border-slate-700">
             <User className="w-3.5 h-3.5 text-primary-400" />
@@ -212,7 +244,9 @@ export function App() {
         isOpen={isPickupOpen}
         onClose={() => setIsPickupOpen(false)}
         onAccept={(_slips, _items) => {
-          showToast('Đã lấy đơn từ kho (Giai đoạn 1: Chỉ xem cấu trúc phiếu xuất).');
+          showToast(
+            "Đã lấy đơn từ kho (Giai đoạn 1: Chỉ xem cấu trúc phiếu xuất).",
+          );
         }}
       />
 

@@ -24,9 +24,17 @@ class VoucherRepository:
         so_ct1: Optional[str] = None,
         so_ct2: Optional[str] = None,
         ma_dt: Optional[str] = None,
+        ma_bp: Optional[str] = None,
+        ma_hd: Optional[str] = None,
+        ma_nx: Optional[str] = None,
         ma_kho: Optional[str] = None,
         ma_vt: Optional[str] = None,
         ma_tte: Optional[str] = None,
+        tk: Optional[str] = None,
+        tk_du: Optional[str] = None,
+        tien_nt1: Optional[float] = None,
+        tien_nt2: Optional[float] = None,
+        filter_by_user: Optional[str] = None,
         page: int = 1,
         page_size: int = 50
     ) -> VoucherListResponse:
@@ -61,9 +69,33 @@ class VoucherRepository:
         if ma_dt:
             where_clauses.append("h.Ma_Dt = ?")
             params.append(ma_dt)
+        if ma_bp:
+            where_clauses.append("h.Ma_Bp = ?")
+            params.append(ma_bp)
+        if ma_hd:
+            where_clauses.append("h.Ma_HD = ?")
+            params.append(ma_hd)
+        if ma_nx:
+            where_clauses.append("h.Ma_Nx = ?")
+            params.append(ma_nx)
         if ma_tte:
             where_clauses.append("h.Ma_Tte = ?")
             params.append(ma_tte)
+        if tk:
+            where_clauses.append("(h.Tk2 = ? OR h.Tk3 = ?)")
+            params.extend([tk, tk])
+        if tk_du:
+            where_clauses.append("h.Tk_Du3 = ?")
+            params.append(tk_du)
+        if tien_nt1 is not None:
+            where_clauses.append("h.TTien_Nt0 >= ?")
+            params.append(tien_nt1)
+        if tien_nt2 is not None:
+            where_clauses.append("h.TTien_Nt0 <= ?")
+            params.append(tien_nt2)
+        if filter_by_user and filter_by_user.strip():
+            where_clauses.append("h.UserName = ?")
+            params.append(filter_by_user.strip())
 
         # Filters involving details (ma_kho, ma_vt)
         detail_filters = []
@@ -104,19 +136,29 @@ class VoucherRepository:
             WHERE {where_sql}
         """
 
-        # 2. Main data query (46 Header columns + joined names)
+        # 2. Main data query (46 Header columns + joined names with SQL font conversion)
         data_sql = f"""
             SELECT
                 h.Stt, h.Ma_DvCs, h.Ma_Ct, h.Nh_Ct, h.Ma_Tte, h.Ty_Gia,
                 h.Ngay_Ps, h.Ngay_Ct, h.So_Ct, h.Ma_Xe, h.Ma_Bp, h.Ma_HD,
                 h.Ma_Dt, h.Ma_Nx, h.Tk2, h.Tk3, h.Tk_Du3, h.Tk4,
-                h.Ong_Ba, h.Dia_Chi, h.Dien_Giai0, h.Desc_EN0,
+                dbo.fn_TCVNToUnicode(h.Ong_Ba) AS Ong_Ba,
+                dbo.fn_TCVNToUnicode(h.Dia_Chi) AS Dia_Chi,
+                dbo.fn_TCVNToUnicode(h.Dien_Giai0) AS Dien_Giai0,
+                dbo.fn_TCVNToUnicode(h.Desc_EN0) AS Desc_EN0,
                 h.TTien_Nt, h.TTien_Nt0, h.TTien_Nt2, h.TTien_Nt3, h.TTien_Nt4,
                 h.TTien, h.TTien0, h.TTien3, h.TTien2, h.TTien4,
                 h.Loai_Ck, h.TyLeCK, h.Han_Tt, h.Ma_Thue, h.Thue_GTGT,
-                h.Ma_DtGtGt, h.Ten_DtGtGt, h.So_Ct0, h.Ngay_Ct0, h.Stt_HBTL,
+                h.Ma_DtGtGt,
+                dbo.fn_TCVNToUnicode(h.Ten_DtGtGt) AS Ten_DtGtGt,
+                h.So_Ct0, h.Ngay_Ct0, h.Stt_HBTL,
                 h.Confirmed, h.Posted, h.Printed, h.UserName,
-                c.Ten_Dt, x.Ten_Xe, bp.Ten_Bp, nx.Ten_Nx, tk.Ten_Tk AS Ten_Tk2, hd.Ten_HD
+                dbo.fn_TCVNToUnicode(c.Ten_Dt) AS Ten_Dt,
+                dbo.fn_TCVNToUnicode(x.Ten_Xe) AS Ten_Xe,
+                dbo.fn_TCVNToUnicode(bp.Ten_Bp) AS Ten_Bp,
+                dbo.fn_TCVNToUnicode(nx.Ten_Nx) AS Ten_Nx,
+                dbo.fn_TCVNToUnicode(tk.Ten_Tk) AS Ten_Tk2,
+                dbo.fn_TCVNToUnicode(hd.Ten_HD) AS Ten_HD
             FROM {self.vp_db}.dbo.CtBH h WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmDt c WITH (NOLOCK) ON c.Ma_Dt = h.Ma_Dt
             LEFT JOIN {self.sys_db}.dbo.DmXe x WITH (NOLOCK) ON x.Ma_Xe = h.Ma_Xe
@@ -181,13 +223,23 @@ class VoucherRepository:
                 h.Stt, h.Ma_DvCs, h.Ma_Ct, h.Nh_Ct, h.Ma_Tte, h.Ty_Gia,
                 h.Ngay_Ps, h.Ngay_Ct, h.So_Ct, h.Ma_Xe, h.Ma_Bp, h.Ma_HD,
                 h.Ma_Dt, h.Ma_Nx, h.Tk2, h.Tk3, h.Tk_Du3, h.Tk4,
-                h.Ong_Ba, h.Dia_Chi, h.Dien_Giai0, h.Desc_EN0,
+                dbo.fn_TCVNToUnicode(h.Ong_Ba) AS Ong_Ba,
+                dbo.fn_TCVNToUnicode(h.Dia_Chi) AS Dia_Chi,
+                dbo.fn_TCVNToUnicode(h.Dien_Giai0) AS Dien_Giai0,
+                dbo.fn_TCVNToUnicode(h.Desc_EN0) AS Desc_EN0,
                 h.TTien_Nt, h.TTien_Nt0, h.TTien_Nt2, h.TTien_Nt3, h.TTien_Nt4,
                 h.TTien, h.TTien0, h.TTien3, h.TTien2, h.TTien4,
                 h.Loai_Ck, h.TyLeCK, h.Han_Tt, h.Ma_Thue, h.Thue_GTGT,
-                h.Ma_DtGtGt, h.Ten_DtGtGt, h.So_Ct0, h.Ngay_Ct0, h.Stt_HBTL,
+                h.Ma_DtGtGt,
+                dbo.fn_TCVNToUnicode(h.Ten_DtGtGt) AS Ten_DtGtGt,
+                h.So_Ct0, h.Ngay_Ct0, h.Stt_HBTL,
                 h.Confirmed, h.Posted, h.Printed, h.UserName,
-                c.Ten_Dt, x.Ten_Xe, bp.Ten_Bp, nx.Ten_Nx, tk.Ten_Tk AS Ten_Tk2, hd.Ten_HD
+                dbo.fn_TCVNToUnicode(c.Ten_Dt) AS Ten_Dt,
+                dbo.fn_TCVNToUnicode(x.Ten_Xe) AS Ten_Xe,
+                dbo.fn_TCVNToUnicode(bp.Ten_Bp) AS Ten_Bp,
+                dbo.fn_TCVNToUnicode(nx.Ten_Nx) AS Ten_Nx,
+                dbo.fn_TCVNToUnicode(tk.Ten_Tk) AS Ten_Tk2,
+                dbo.fn_TCVNToUnicode(hd.Ten_HD) AS Ten_HD
             FROM {self.vp_db}.dbo.CtBH h WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmDt c WITH (NOLOCK) ON c.Ma_Dt = h.Ma_Dt
             LEFT JOIN {self.sys_db}.dbo.DmXe x WITH (NOLOCK) ON x.Ma_Xe = h.Ma_Xe
@@ -206,7 +258,9 @@ class VoucherRepository:
                 d.Tien_Nt9, d.Tien9, d.So_Luong, d.Gia_Nt, d.Gia, d.Tien_Nt,
                 d.Tien, d.Gia_Nt2, d.Gia2, d.Tien_Nt2, d.Tien2, d.Tien_Nt3,
                 d.Tien3, d.Chiet_Khau, d.Tien_Nt4, d.Tien4, d.Gia_Tb_TT,
-                v.Ten_Vt, k.Ten_Kho, v.Loai_Vt
+                dbo.fn_TCVNToUnicode(v.Ten_Vt) AS Ten_Vt,
+                dbo.fn_TCVNToUnicode(k.Ten_Kho) AS Ten_Kho,
+                v.Loai_Vt
             FROM {self.vp_db}.dbo.CtBH0 d WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmVt v WITH (NOLOCK) ON v.Ma_Vt = d.Ma_Vt
             LEFT JOIN {self.sys_db}.dbo.DmKho k WITH (NOLOCK) ON k.Ma_Kho = d.Ma_Kho
@@ -252,10 +306,10 @@ class VoucherRepository:
             tk3=(r[15] or "33311").strip(),
             tk_du3=(r[16] or "1311").strip(),
             tk4=(r[17] or "521").strip(),
-            ong_ba=tcvn_to_unicode(r[18]),
-            dia_chi=tcvn_to_unicode(r[19]),
-            dien_giai0=tcvn_to_unicode(r[20]),
-            desc_en0=tcvn_to_unicode(r[21]),
+            ong_ba=(r[18] or "").strip(),
+            dia_chi=(r[19] or "").strip(),
+            dien_giai0=(r[20] or "").strip(),
+            desc_en0=(r[21] or "").strip(),
             ttien_nt=float(r[22] or 0.0),
             ttien_nt0=float(r[23] or 0.0),
             ttien_nt2=float(r[24] or 0.0),
@@ -272,7 +326,7 @@ class VoucherRepository:
             ma_thue=(r[35] or "").strip(),
             thue_gtgt=float(r[36] or 0.0),
             ma_dtgtgt=(r[37] or "").strip(),
-            ten_dtgtgt=tcvn_to_unicode(r[38]),
+            ten_dtgtgt=(r[38] or "").strip(),
             so_ct0=(r[39] or "").strip(),
             ngay_ct0=r[40].strftime("%Y-%m-%d") if r[40] else None,
             stt_hbtl=(r[41] or "").strip(),
@@ -280,12 +334,12 @@ class VoucherRepository:
             posted=bool(r[43]),
             printed=bool(r[44]),
             user_name=(r[45] or "").strip(),
-            ten_dt=tcvn_to_unicode(r[46]),
-            ten_xe=tcvn_to_unicode(r[47]),
-            ten_bp=tcvn_to_unicode(r[48]),
-            ten_nx=tcvn_to_unicode(r[49]),
-            ten_tk2=tcvn_to_unicode(r[50]),
-            ten_hd=tcvn_to_unicode(r[51]),
+            ten_dt=(r[46] or "").strip(),
+            ten_xe=(r[47] or "").strip(),
+            ten_bp=(r[48] or "").strip(),
+            ten_nx=(r[49] or "").strip(),
+            ten_tk2=(r[50] or "").strip(),
+            ten_hd=(r[51] or "").strip(),
         )
 
     def _row_to_detail_schema(self, dr: Any) -> VoucherDetailSchema:
@@ -325,8 +379,8 @@ class VoucherRepository:
             tien_nt4=float(dr[32] or 0.0),
             tien4=float(dr[33] or 0.0),
             gia_tb_tt=(dr[34] or "K").strip(),
-            ten_vt=tcvn_to_unicode(dr[35]),
-            ten_kho=tcvn_to_unicode(dr[36]),
+            ten_vt=(dr[35] or "").strip(),
+            ten_kho=(dr[36] or "").strip(),
             loai_vt=(dr[37] or "1").strip()
         )
 

@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import {
   VoucherHeader,
   VoucherFullDetail,
   VoucherFilterParams,
   VoucherPagination,
   VoucherSummaryTotals,
-} from '../types/voucher';
-import { getTodayDate } from '../lib/format';
+} from "../types/voucher";
+import { getTodayDate } from "../lib/format";
 
 export function useVouchers() {
   const [vouchers, setVouchers] = useState<VoucherHeader[]>([]);
@@ -31,7 +31,7 @@ export function useVouchers() {
   });
   const today = getTodayDate();
   const [filters, setFilters] = useState<VoucherFilterParams>({
-    ma_ct: 'X1',
+    ma_ct: "X1",
     ngay_ct1: today,
     ngay_ct2: today,
     page: 1,
@@ -41,7 +41,9 @@ export function useVouchers() {
   const [loading, setLoading] = useState<boolean>(false);
 
   // Active detailed voucher
-  const [activeVoucher, setActiveVoucher] = useState<VoucherFullDetail | null>(null);
+  const [activeVoucher, setActiveVoucher] = useState<VoucherFullDetail | null>(
+    null,
+  );
   const [loadingDetail, setLoadingDetail] = useState<boolean>(false);
 
   // Modal dialog states
@@ -49,43 +51,59 @@ export function useVouchers() {
   const [isPrintOpen, setIsPrintOpen] = useState<boolean>(false);
   const [isPickupOpen, setIsPickupOpen] = useState<boolean>(false);
   const [isDebtOpen, setIsDebtOpen] = useState<boolean>(false);
-  const [printStt, setPrintStt] = useState<string>('');
-  const [debtMaDt, setDebtMaDt] = useState<string>('');
+  const [printStt, setPrintStt] = useState<string>("");
+  const [debtMaDt, setDebtMaDt] = useState<string>("");
 
   const fetchVouchers = useCallback(async () => {
     setLoading(true);
     try {
       const q = new URLSearchParams();
-      if (filters.ma_ct) q.append('ma_ct', filters.ma_ct);
-      if (filters.ngay_ct1) q.append('ngay_ct1', filters.ngay_ct1);
-      if (filters.ngay_ct2) q.append('ngay_ct2', filters.ngay_ct2);
-      if (filters.so_ct1) q.append('so_ct1', filters.so_ct1);
-      if (filters.so_ct2) q.append('so_ct2', filters.so_ct2);
-      if (filters.ma_dt) q.append('ma_dt', filters.ma_dt);
-      if (filters.ma_kho) q.append('ma_kho', filters.ma_kho);
-      if (filters.ma_vt) q.append('ma_vt', filters.ma_vt);
-      if (filters.ma_tte) q.append('ma_tte', filters.ma_tte);
-      q.append('page', String(filters.page || 1));
-      q.append('page_size', String(filters.page_size || 50));
+      if (filters.ma_ct) q.append("ma_ct", filters.ma_ct);
+      if (filters.ngay_ct1) q.append("ngay_ct1", filters.ngay_ct1);
+      if (filters.ngay_ct2) q.append("ngay_ct2", filters.ngay_ct2);
+      if (filters.so_ct1) q.append("so_ct1", filters.so_ct1);
+      if (filters.so_ct2) q.append("so_ct2", filters.so_ct2);
+      if (filters.ma_dt) q.append("ma_dt", filters.ma_dt);
+      if (filters.ma_kho) q.append("ma_kho", filters.ma_kho);
+      if (filters.ma_vt) q.append("ma_vt", filters.ma_vt);
+      if (filters.ma_tte) q.append("ma_tte", filters.ma_tte);
+      q.append("page", String(filters.page || 1));
+      q.append("page_size", String(filters.page_size || 50));
 
       const res = await fetch(`/api/vouchers?${q.toString()}`);
       const data = await res.json();
       if (data.success && data.data) {
-        setVouchers(data.data.items || []);
+        const items: VoucherHeader[] = data.data.items || [];
+        setVouchers(items);
         setPagination(data.data.pagination);
         setSummary(data.data.summary);
-        if (data.data.items?.length > 0) {
-          setSelectedStt((prev) => (data.data.items.some((it: any) => it.stt === prev) ? prev : data.data.items[0].stt));
-        } else {
-          setSelectedStt(null);
-        }
+        // Chỉ giữ lựa chọn nếu còn tồn tại trong trang hiện tại; nếu chưa có thì chọn dòng đầu.
+        setSelectedStt((prev) =>
+          items.some((it) => it.stt === prev)
+            ? prev
+            : items.length > 0
+              ? items[0].stt
+              : null,
+        );
+      } else {
+        setVouchers([]);
+        setPagination({
+          page: 1,
+          page_size: 50,
+          total_records: 0,
+          total_pages: 1,
+          has_next: false,
+        });
+        setSelectedStt(null);
       }
     } catch (err) {
-      console.error('Error fetching vouchers list:', err);
+      console.error("Error fetching vouchers list:", err);
+      setVouchers([]);
+      setSelectedStt(null);
     } finally {
       setLoading(false);
     }
-  }, [filters, selectedStt]);
+  }, [filters]);
 
   useEffect(() => {
     fetchVouchers();

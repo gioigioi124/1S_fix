@@ -158,9 +158,9 @@ class CalcService:
         ttien_nt4 = round_amount(sum(item.tien_nt4 for item in calc_items), 2)
         ttien_nt2 = round_amount(sum(item.tien_nt2 for item in calc_items), 2)
 
-        ttien = float(sum(int(item.tien9) for item in calc_items))
-        ttien4 = float(sum(int(item.tien4) for item in calc_items))
-        ttien2 = float(sum(int(item.tien2) for item in calc_items))
+        ttien = float(sum(round_vnd(item.tien9) for item in calc_items))
+        ttien4 = float(sum(round_vnd(item.tien4) for item in calc_items))
+        ttien2 = float(sum(round_vnd(item.tien2) for item in calc_items))
 
         # Step 4: VAT Calculation
         if loai_ck == "1":

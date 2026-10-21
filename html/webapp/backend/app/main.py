@@ -18,10 +18,13 @@ app = FastAPI(
 )
 
 # CORS Middleware
-origins = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else ["*"]
+# NOTE: allow_credentials=True is incompatible with allow_origins=["*"] per the
+# CORS spec. We therefore never send the wildcard when credentials are allowed.
+origins = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else [settings.CORS_ORIGINS]
+origins = [o for o in origins if o and o != "*"] or ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if origins != ["*"] else ["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],

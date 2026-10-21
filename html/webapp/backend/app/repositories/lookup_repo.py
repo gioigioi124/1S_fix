@@ -14,12 +14,17 @@ logger = logging.getLogger("app.repositories.lookup")
 class LookupRepository:
     def __init__(self):
         self.sys_db = settings.DB_SYS
+        self.vp_db = settings.DB_VP
+        # fn_TCVNToUnicode is defined in VP_2014; qualify it so the call works
+        # even when the connection's default database is VTSYS.
+        self.fn_uni = f"{self.vp_db}.dbo.fn_TCVNToUnicode"
 
     def get_vat_tu(self, query: Optional[str] = None, limit: int = 200) -> List[VatTuLookup]:
         results: List[VatTuLookup] = []
+        fn = self.fn_uni
         sql = f"""
             SELECT TOP ({limit})
-                Ma_Vt, Ten_Vt, Dvt, Dvt_Ban, Loai_Vt,
+                Ma_Vt, {fn}(Ten_Vt) AS Ten_Vt, Dvt, Dvt_Ban, Loai_Vt,
                 Tk_Gv, Tk_Vt, Tk_Dt, Tk_Ck,
                 ISNULL(He_So0, 1) AS He_So0,
                 ISNULL(He_So1, 1) AS He_So1,
@@ -30,7 +35,7 @@ class LookupRepository:
         params = []
         if query:
             q_like = f"%{query}%"
-            sql += " WHERE Ma_Vt LIKE ? OR Ten_Vt LIKE ?"
+            sql += f" WHERE Ma_Vt LIKE ? OR {fn}(Ten_Vt) LIKE ?"
             params.extend([q_like, q_like])
         sql += " ORDER BY Ma_Vt"
 
@@ -41,7 +46,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(VatTuLookup(
                         ma_vt=(r[0] or "").strip(),
-                        ten_vt=tcvn_to_unicode(r[1]),
+                        ten_vt=(r[1] or "").strip(),
                         dvt=(r[2] or "").strip(),
                         dvt_ban=(r[3] or "").strip(),
                         loai_vt=(r[4] or "1").strip(),
@@ -62,19 +67,22 @@ class LookupRepository:
 
     def get_khach_hang(self, query: Optional[str] = None, limit: int = 200) -> List[KhachHangLookup]:
         results: List[KhachHangLookup] = []
+        fn = self.fn_uni
         sql = f"""
             SELECT TOP ({limit})
-                Ma_Dt, Ten_Dt, Dia_Chi, Ong_Ba, MS_Thue,
+                Ma_Dt, {fn}(Ten_Dt) AS Ten_Dt,
+                {fn}(Dia_Chi) AS Dia_Chi,
+                {fn}(Doi_Tac) AS Doi_Tac,
+                Ms_Thue,
                 ISNULL(Han_Tt, 0) AS Han_Tt,
                 ISNULL(Gioi_Han, 0) AS Gioi_Han,
-                ISNULL(Toi_Han, 0) AS Toi_Han,
-                Doi_Tac, Ma_Bp, Ma_Xe
+                ISNULL(Toi_Han, 0) AS Toi_Han
             FROM {self.sys_db}.dbo.DmDt WITH (NOLOCK)
         """
         params = []
         if query:
             q_like = f"%{query}%"
-            sql += " WHERE Ma_Dt LIKE ? OR Ten_Dt LIKE ?"
+            sql += f" WHERE Ma_Dt LIKE ? OR {fn}(Ten_Dt) LIKE ?"
             params.extend([q_like, q_like])
         sql += " ORDER BY Ma_Dt"
 
@@ -83,18 +91,20 @@ class LookupRepository:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
                 for r in rows:
+                    doi_tac = (r[3] or "").strip()
                     results.append(KhachHangLookup(
                         ma_dt=(r[0] or "").strip(),
-                        ten_dt=tcvn_to_unicode(r[1]),
-                        dia_chi=tcvn_to_unicode(r[2]),
-                        ong_ba=tcvn_to_unicode(r[3]),
+                        ten_dt=(r[1] or "").strip(),
+                        dia_chi=(r[2] or "").strip(),
+                        # Per All_fix.md #24: người giao dịch (Ong_Ba) lấy từ Doi_Tac
+                        ong_ba=doi_tac,
                         ms_thue=(r[4] or "").strip(),
                         han_tt=int(r[5] or 0),
                         gioi_han=float(r[6] or 0.0),
                         toi_han=float(r[7] or 0.0),
-                        doi_tac=tcvn_to_unicode(r[8]),
-                        ma_bp=(r[9] or "").strip(),
-                        ma_xe=(r[10] or "").strip()
+                        doi_tac=doi_tac,
+                        ma_bp="",
+                        ma_xe=""
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmDt: {e}")
@@ -102,7 +112,7 @@ class LookupRepository:
 
     def get_kho(self) -> List[KhoLookup]:
         results: List[KhoLookup] = []
-        sql = f"SELECT Ma_Kho, Ten_Kho FROM {self.sys_db}.dbo.DmKho WITH (NOLOCK) ORDER BY Ma_Kho"
+        sql = f"SELECT Ma_Kho, {self.fn_uni}(Ten_Kho) AS Ten_Kho FROM {self.sys_db}.dbo.DmKho WITH (NOLOCK) ORDER BY Ma_Kho"
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(sql)
@@ -110,7 +120,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(KhoLookup(
                         ma_kho=(r[0] or "").strip(),
-                        ten_kho=tcvn_to_unicode(r[1])
+                        ten_kho=(r[1] or "").strip()
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmKho: {e}")
@@ -119,7 +129,7 @@ class LookupRepository:
     def get_thue(self) -> List[ThueLookup]:
         results: List[ThueLookup] = []
         sql = f"""
-            SELECT Ma_Thue, Ten_Thue, ISNULL(Thue_GTGT, 0) AS Thue_GTGT, Tk
+            SELECT Ma_Thue, {self.fn_uni}(Ten_Thue) AS Ten_Thue, ISNULL(Thue_GTGT, 0) AS Thue_GTGT, Tk
             FROM {self.sys_db}.dbo.DmThue WITH (NOLOCK)
             ORDER BY Ma_Thue
         """
@@ -130,7 +140,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(ThueLookup(
                         ma_thue=(r[0] or "").strip(),
-                        ten_thue=tcvn_to_unicode(r[1]),
+                        ten_thue=(r[1] or "").strip(),
                         thue_gtgt=float(r[2] or 0.0),
                         tk=(r[3] or "33311").strip()
                     ))
@@ -140,11 +150,11 @@ class LookupRepository:
 
     def get_tai_khoan(self, query: Optional[str] = None) -> List[TaiKhoanLookup]:
         results: List[TaiKhoanLookup] = []
-        sql = f"SELECT Tk, Ten_Tk, Tk_Dt FROM {self.sys_db}.dbo.DmTk WITH (NOLOCK)"
+        sql = f"SELECT Tk, {self.fn_uni}(Ten_Tk) AS Ten_Tk, Tk_Dt FROM {self.sys_db}.dbo.DmTk WITH (NOLOCK)"
         params = []
         if query:
             q_like = f"%{query}%"
-            sql += " WHERE Tk LIKE ? OR Ten_Tk LIKE ?"
+            sql += f" WHERE Tk LIKE ? OR {self.fn_uni}(Ten_Tk) LIKE ?"
             params.extend([q_like, q_like])
         sql += " ORDER BY Tk"
 
@@ -155,7 +165,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(TaiKhoanLookup(
                         tk=(r[0] or "").strip(),
-                        ten_tk=tcvn_to_unicode(r[1]),
+                        ten_tk=(r[1] or "").strip(),
                         tk_dt=(r[2] or "").strip()
                     ))
         except Exception as e:
@@ -164,7 +174,7 @@ class LookupRepository:
 
     def get_nhap_xuat(self) -> List[NhapXuatLookup]:
         results: List[NhapXuatLookup] = []
-        sql = f"SELECT Ma_Nx, Ten_Nx, Dinh_Khoan FROM {self.sys_db}.dbo.DmNx WITH (NOLOCK) ORDER BY Ma_Nx"
+        sql = f"SELECT Ma_Nx, {self.fn_uni}(Ten_Nx) AS Ten_Nx, Dinh_Khoan FROM {self.sys_db}.dbo.DmNx WITH (NOLOCK) ORDER BY Ma_Nx"
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(sql)
@@ -172,7 +182,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(NhapXuatLookup(
                         ma_nx=(r[0] or "").strip(),
-                        ten_nx=tcvn_to_unicode(r[1]),
+                        ten_nx=(r[1] or "").strip(),
                         dinh_khoan=(r[2] or "C").strip()
                     ))
         except Exception as e:
@@ -181,7 +191,7 @@ class LookupRepository:
 
     def get_xe(self) -> List[XeLookup]:
         results: List[XeLookup] = []
-        sql = f"SELECT Ma_Xe, Ten_Xe FROM {self.sys_db}.dbo.DmXe WITH (NOLOCK) ORDER BY Ma_Xe"
+        sql = f"SELECT Ma_Xe, {self.fn_uni}(Ten_Xe) AS Ten_Xe FROM {self.sys_db}.dbo.DmXe WITH (NOLOCK) ORDER BY Ma_Xe"
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(sql)
@@ -189,7 +199,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(XeLookup(
                         ma_xe=(r[0] or "").strip(),
-                        ten_xe=tcvn_to_unicode(r[1])
+                        ten_xe=(r[1] or "").strip()
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmXe: {e}")
@@ -197,7 +207,7 @@ class LookupRepository:
 
     def get_bo_phan(self) -> List[BoPhanLookup]:
         results: List[BoPhanLookup] = []
-        sql = f"SELECT Ma_Bp, Ten_Bp FROM {self.sys_db}.dbo.DmBp WITH (NOLOCK) ORDER BY Ma_Bp"
+        sql = f"SELECT Ma_Bp, {self.fn_uni}(Ten_Bp) AS Ten_Bp FROM {self.sys_db}.dbo.DmBp WITH (NOLOCK) ORDER BY Ma_Bp"
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(sql)
@@ -205,7 +215,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(BoPhanLookup(
                         ma_bp=(r[0] or "").strip(),
-                        ten_bp=tcvn_to_unicode(r[1])
+                        ten_bp=(r[1] or "").strip()
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmBp: {e}")
@@ -213,11 +223,11 @@ class LookupRepository:
 
     def get_hop_dong(self, query: Optional[str] = None) -> List[HopDongLookup]:
         results: List[HopDongLookup] = []
-        sql = f"SELECT Ma_HD, Ten_HD FROM {self.sys_db}.dbo.DmHD WITH (NOLOCK)"
+        sql = f"SELECT Ma_HD, {self.fn_uni}(Ten_HD) AS Ten_HD FROM {self.sys_db}.dbo.DmHD WITH (NOLOCK)"
         params = []
         if query:
             q_like = f"%{query}%"
-            sql += " WHERE Ma_HD LIKE ? OR Ten_HD LIKE ?"
+            sql += f" WHERE Ma_HD LIKE ? OR {self.fn_uni}(Ten_HD) LIKE ?"
             params.extend([q_like, q_like])
         sql += " ORDER BY Ma_HD"
 
@@ -228,7 +238,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(HopDongLookup(
                         ma_hd=(r[0] or "").strip(),
-                        ten_hd=tcvn_to_unicode(r[1])
+                        ten_hd=(r[1] or "").strip()
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmHD: {e}")
@@ -237,7 +247,7 @@ class LookupRepository:
     def get_tien_te(self) -> List[TienTeLookup]:
         results: List[TienTeLookup] = []
         sql = f"""
-            SELECT Ma_Tte, Ten_Tte, ISNULL(Ty_Gia, 1.0) AS Ty_Gia
+            SELECT Ma_Tte, {self.fn_uni}(Ten_Tte) AS Ten_Tte, ISNULL(Ty_Gia, 1.0) AS Ty_Gia
             FROM {self.sys_db}.dbo.DmTte WITH (NOLOCK)
             ORDER BY Ma_Tte
         """
@@ -248,7 +258,7 @@ class LookupRepository:
                 for r in rows:
                     results.append(TienTeLookup(
                         ma_tte=(r[0] or "").strip(),
-                        ten_tte=tcvn_to_unicode(r[1]),
+                        ten_tte=(r[1] or "").strip(),
                         ty_gia=float(r[2] or 1.0)
                     ))
         except Exception as e:

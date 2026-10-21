@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     DB_DRIVER: str = "{ODBC Driver 17 for SQL Server}"
     DB_SERVER: str = "192.168.10.8,14333"
     DB_USER: str = "sa"
-    DB_PASS: str = "sql2008@"
+    # SECURITY: never hardcode real credentials. Provide via backend/.env
+    DB_PASS: str = ""
     DB_VP: str = "VP_2014"
     DB_KH: str = "KH_2014"
     DB_SYS: str = "VTSYS"
@@ -32,7 +33,6 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
-        "*"
     ]
 
     @field_validator("CORS_ORIGINS", mode="before")

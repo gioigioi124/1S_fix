@@ -11,26 +11,40 @@ class DebtRepository:
     def __init__(self):
         self.vp_db = settings.DB_VP
         self.sys_db = settings.DB_SYS
+        # fn_TCVNToUnicode is defined in VP_2014; qualify it so calls work from any connection.
+        self.fn_uni = f"{self.vp_db}.dbo.fn_TCVNToUnicode"
 
     def get_customer_debt_summary(self, ma_dt: str, tk: str = "131") -> CustomerDebtSummary:
         """
         Query customer realtime debt and credit limit according to Fix #1, #2, #3.
         100% READ-ONLY (SELECT only).
+
+        NOTE: dbo.SoCai stores Dr/Cr legs as Tk_No/Ma_Dt_No and Tk_Co/Ma_Dt_Co
+        with the VND amount in [Tien] and the foreign amount in [Tien_Nt].
+        There is NO Ps_No/Ps_Co column in SoCai (that belongs to CdCt).
         """
         limit_sql = f"""
-            SELECT Ten_Dt, ISNULL(Gioi_Han, 0) AS Gioi_Han, ISNULL(Toi_Han, 0) AS Toi_Han
+            SELECT {self.fn_uni}(Ten_Dt) AS Ten_Dt, ISNULL(Gioi_Han, 0) AS Gioi_Han, ISNULL(Toi_Han, 0) AS Toi_Han
             FROM {self.sys_db}.dbo.DmDt WITH (NOLOCK)
             WHERE Ma_Dt = ?
         """
 
-        balance_sql = f"""
+        # Debit leg (TK 131 nợ): Tk_No LIKE '131%' against this customer
+        debit_sql = f"""
             SELECT
-                ISNULL(SUM(Ps_No), 0) AS total_ps_no,
-                ISNULL(SUM(Ps_Co), 0) AS total_ps_co,
-                ISNULL(SUM(Ps_No_Nt), 0) AS total_ps_no_nt,
-                ISNULL(SUM(Ps_Co_Nt), 0) AS total_ps_co_nt
+                ISNULL(SUM(Tien), 0)    AS ps_no,
+                ISNULL(SUM(Tien_Nt), 0) AS ps_no_nt
             FROM {self.vp_db}.dbo.SoCai WITH (NOLOCK)
-            WHERE Ma_Dt = ? AND Tk LIKE ?
+            WHERE Tk_No LIKE ? AND Ma_Dt_No = ?
+        """
+
+        # Credit leg (TK 131 có): Tk_Co LIKE '131%' against this customer
+        credit_sql = f"""
+            SELECT
+                ISNULL(SUM(Tien), 0)    AS ps_co,
+                ISNULL(SUM(Tien_Nt), 0) AS ps_co_nt
+            FROM {self.vp_db}.dbo.SoCai WITH (NOLOCK)
+            WHERE Tk_Co LIKE ? AND Ma_Dt_Co = ?
         """
 
         ten_dt = ""
@@ -41,12 +55,14 @@ class DebtRepository:
         ps_no_nt = 0.0
         ps_co_nt = 0.0
 
+        tk_param = f"{tk}%"
+
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(limit_sql, [ma_dt])
                 r = cur.fetchone()
                 if r:
-                    ten_dt = tcvn_to_unicode(r[0])
+                    ten_dt = (r[0] or "").strip()
                     gioi_han = float(r[1] or 0.0)
                     toi_han = float(r[2] or 0.0)
         except Exception as e:
@@ -54,14 +70,17 @@ class DebtRepository:
 
         try:
             with get_db_cursor(self.vp_db) as cur:
-                tk_param = f"{tk}%"
-                cur.execute(balance_sql, [ma_dt, tk_param])
+                cur.execute(debit_sql, [tk_param, ma_dt])
                 r = cur.fetchone()
                 if r:
                     ps_no = float(r[0] or 0.0)
-                    ps_co = float(r[1] or 0.0)
-                    ps_no_nt = float(r[2] or 0.0)
-                    ps_co_nt = float(r[3] or 0.0)
+                    ps_no_nt = float(r[1] or 0.0)
+
+                cur.execute(credit_sql, [tk_param, ma_dt])
+                r = cur.fetchone()
+                if r:
+                    ps_co = float(r[0] or 0.0)
+                    ps_co_nt = float(r[1] or 0.0)
         except Exception as e:
             logger.warning(f"Error querying SoCai for balance: {e}")
 
@@ -100,7 +119,7 @@ class DebtRepository:
         Get detailed debt transactions for a customer related to a voucher. 100% READ-ONLY.
         """
         voucher_sql = f"""
-            SELECT h.Ma_Dt, c.Ten_Dt, h.So_Ct, h.Ngay_Ct, ISNULL(h.TTien_Nt0, 0) AS TTien_Nt0, ISNULL(h.TTien0, 0) AS TTien0
+            SELECT h.Ma_Dt, {self.fn_uni}(c.Ten_Dt) AS Ten_Dt, h.So_Ct, h.Ngay_Ct, ISNULL(h.TTien_Nt0, 0) AS TTien_Nt0, ISNULL(h.TTien0, 0) AS TTien0
             FROM {self.vp_db}.dbo.CtBH h WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmDt c WITH (NOLOCK) ON c.Ma_Dt = h.Ma_Dt
             WHERE h.Stt = ?
@@ -118,23 +137,24 @@ class DebtRepository:
                 r = cur.fetchone()
                 if r:
                     ma_dt = (r[0] or "").strip()
-                    ten_dt = tcvn_to_unicode(r[1])
+                    ten_dt = (r[1] or "").strip()
                     so_ct = (r[2] or "").strip()
                     ngay_ct = r[3].strftime("%Y-%m-%d") if r[3] else ""
                     tong_no = float(r[5] or r[4] or 0.0)
         except Exception as e:
             logger.warning(f"Error querying voucher header for debt detail: {e}")
 
-        # Query transactions from SoCai for this customer
+        # Query transactions from SoCai for this customer (both Dr and Cr legs on TK 131x)
         tx_sql = f"""
             SELECT TOP 50
-                Ngay_Ct, So_Ct, Dien_Giai,
-                ISNULL(Ps_No, 0) AS Ps_No,
-                ISNULL(Ps_Co, 0) AS Ps_Co,
-                ISNULL(Ps_No_Nt, 0) AS Ps_No_Nt,
-                ISNULL(Ps_Co_Nt, 0) AS Ps_Co_Nt
+                Ngay_Ct, So_Ct, {self.fn_uni}(Dien_Giai) AS Dien_Giai,
+                CASE WHEN Tk_No LIKE '131%' THEN ISNULL(Tien, 0) ELSE 0 END      AS Ps_No,
+                CASE WHEN Tk_Co LIKE '131%' THEN ISNULL(Tien, 0) ELSE 0 END      AS Ps_Co,
+                CASE WHEN Tk_No LIKE '131%' THEN ISNULL(Tien_Nt, 0) ELSE 0 END   AS Ps_No_Nt,
+                CASE WHEN Tk_Co LIKE '131%' THEN ISNULL(Tien_Nt, 0) ELSE 0 END   AS Ps_Co_Nt
             FROM {self.vp_db}.dbo.SoCai WITH (NOLOCK)
-            WHERE Ma_Dt = ? AND Tk LIKE '131%'
+            WHERE (Tk_No LIKE '131%' AND Ma_Dt_No = ?)
+               OR (Tk_Co LIKE '131%' AND Ma_Dt_Co = ?)
             ORDER BY Ngay_Ct DESC, So_Ct DESC
         """
 
@@ -143,7 +163,7 @@ class DebtRepository:
         try:
             if ma_dt:
                 with get_db_cursor(self.vp_db) as cur:
-                    cur.execute(tx_sql, [ma_dt])
+                    cur.execute(tx_sql, [ma_dt, ma_dt])
                     rows = cur.fetchall()
                     for tr in rows:
                         p_co = float(tr[4] or 0.0)
@@ -151,7 +171,7 @@ class DebtRepository:
                         transactions.append(DebtTransaction(
                             ngay_ct=tr[0].strftime("%Y-%m-%d") if tr[0] else "",
                             so_ct=(tr[1] or "").strip(),
-                            dien_giai=tcvn_to_unicode(tr[2]),
+                            dien_giai=(tr[2] or "").strip(),
                             ps_no=float(tr[3] or 0.0),
                             ps_co=p_co,
                             ps_no_nt=float(tr[5] or 0.0),

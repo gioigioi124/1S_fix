@@ -32,3 +32,42 @@
 .vfp-header {
   @apply px-2 py-1.5 bg-slate-200 font-semibold text-slate-700 text-xs border-r border-b border-slate-300 text-left select-none;
 }
+
+/* ===== Print styles cho mẫu in phiếu (PrintPreview) ===== */
+@media print {
+  /* Ẩn toàn bộ UI điều khiển, chỉ giữ phần mẫu in */
+  body * {
+    visibility: hidden;
+  }
+
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Dialog không nên chiếm overlay khi in */
+  .fixed {
+    position: static !important;
+    inset: auto !important;
+  }
+
+  /* Bỏ nền xám của overlay + scrollbar */
+  .bg-slate-900\/40 {
+    background: transparent !important;
+    backdrop-filter: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
