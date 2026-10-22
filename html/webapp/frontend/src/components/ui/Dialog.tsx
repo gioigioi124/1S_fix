@@ -1,7 +1,7 @@
-import React, { useEffect } from 'react';
-import { X } from 'lucide-react';
-import { cn } from '../../lib/utils';
-import { Button } from './Button';
+import React, { useEffect } from "react";
+import { X } from "lucide-react";
+import { cn } from "../../lib/utils";
+import { Button } from "./Button";
 
 export interface DialogProps {
   isOpen: boolean;
@@ -17,35 +17,35 @@ export const Dialog: React.FC<DialogProps> = ({
   onClose,
   title,
   children,
-  width = 'max-w-4xl',
+  width = "max-w-4xl",
   footer,
 }) => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === "Escape" && isOpen) {
         onClose();
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/40 backdrop-blur-sm">
       <div
         className={cn(
-          'w-full bg-white rounded-lg shadow-xl border border-slate-300 flex flex-col max-h-[90vh] overflow-hidden',
-          width
+          "w-full bg-white rounded-lg shadow-xl border border-neutral-400 flex flex-col max-h-[90vh] overflow-hidden",
+          width,
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+        <div className="flex items-center justify-between px-4 py-2.5 bg-neutral-100 border-b border-neutral-300">
+          <h3 className="text-sm font-bold text-neutral-800">{title}</h3>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-200 transition-colors"
+            className="text-neutral-400 hover:text-neutral-600 p-1 rounded hover:bg-neutral-200 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -56,7 +56,7 @@ export const Dialog: React.FC<DialogProps> = ({
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-2 px-4 py-2.5 bg-slate-50 border-t border-slate-200">
+          <div className="flex items-center justify-end gap-2 px-4 py-2.5 bg-neutral-50 border-t border-neutral-300">
             {footer}
           </div>
         )}

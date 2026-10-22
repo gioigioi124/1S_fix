@@ -1,10 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Dialog } from './ui/Dialog';
-import { Button } from './ui/Button';
-import { Badge } from './ui/Badge';
-import { PickupSlip, PickupItem } from '../types/pickup';
-import { formatQuantity, formatDate } from '../lib/format';
-import { Warehouse, CheckSquare, Square, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from "react";
+import { Button } from "./ui/Button";
+import { PickupSlip, PickupItem } from "../types/pickup";
+import { formatQuantity, formatDate } from "../lib/format";
+import { Check, X, Minus, Square, RefreshCw } from "lucide-react";
 
 interface PickupDialogProps {
   isOpen: boolean;
@@ -13,6 +11,13 @@ interface PickupDialogProps {
   onAccept: (selectedSlips: PickupSlip[], items: PickupItem[]) => void;
 }
 
+/**
+ * Chọn Phiếu Xuất Kho (ctbhch — KH_2014).
+ * Giao diện Master/Detail theo mẫu Pickup.html: header navy gradient,
+ * bảng phiếu xuất (Grid1 - K_DsPx) + chi tiết vật tư (Grid2 - K_CtPx),
+ * footer đếm "Số phiếu đã chọn [ n ] / [ total ]".
+ * Hotkey khớp VFP (plan §7.2.3): Space, Ctrl+A, Ctrl+U, Ctrl+Home/End, Enter, Esc.
+ */
 export const PickupDialog: React.FC<PickupDialogProps> = ({
   isOpen,
   onClose,
@@ -27,10 +32,12 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // Fetch slips
-  const loadSlips = async () => {
+  const loadSlips = useCallback(async () => {
     setLoading(true);
     try {
-      const url = maDt ? `/api/pickup/list?ma_dt=${encodeURIComponent(maDt)}` : '/api/pickup/list';
+      const url = maDt
+        ? `/api/pickup/list?ma_dt=${encodeURIComponent(maDt)}`
+        : "/api/pickup/list";
       const res = await fetch(url);
       const data = await res.json();
       if (data.success && data.data?.items) {
@@ -40,17 +47,17 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
         }
       }
     } catch (e) {
-      console.error('Error fetching pickup slips', e);
+      console.error("Error fetching pickup slips", e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [maDt]);
 
   useEffect(() => {
     if (isOpen) {
       loadSlips();
     }
-  }, [isOpen, maDt]);
+  }, [isOpen, loadSlips]);
 
   // Fetch items when active slip changes
   useEffect(() => {
@@ -61,13 +68,15 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     const fetchDetail = async () => {
       setLoadingDetail(true);
       try {
-        const res = await fetch(`/api/pickup/detail/${encodeURIComponent(activeStt)}`);
+        const res = await fetch(
+          `/api/pickup/detail/${encodeURIComponent(activeStt)}`,
+        );
         const data = await res.json();
         if (data.success && data.data?.items) {
           setActiveItems(data.data.items);
         }
       } catch (e) {
-        console.error('Error fetching pickup detail', e);
+        console.error("Error fetching pickup detail", e);
       } finally {
         setLoadingDetail(false);
       }
@@ -75,7 +84,7 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     fetchDetail();
   }, [activeStt]);
 
-  const toggleSelect = (stt: string) => {
+  const toggleSelect = useCallback((stt: string) => {
     setSelectedStts((prev) => {
       const next = new Set(prev);
       if (next.has(stt)) {
@@ -85,189 +94,395 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
       }
       return next;
     });
-  };
+  }, []);
 
-  const selectAll = () => {
+  const selectAll = useCallback(() => {
     setSelectedStts(new Set(slips.map((s) => s.stt)));
-  };
+  }, [slips]);
 
-  const deselectAll = () => {
+  const deselectAll = useCallback(() => {
     setSelectedStts(new Set());
-  };
+  }, []);
 
-  const handleAccept = () => {
+  const handleAccept = useCallback(() => {
     const selected = slips.filter((s) => selectedStts.has(s.stt));
     onAccept(selected, activeItems);
     onClose();
-  };
+  }, [slips, selectedStts, activeItems, onAccept, onClose]);
+
+  // ===== Hotkey chuẩn VFP ctbhch (plan §7.2.3) =====
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selectAll();
+      } else if (ctrl && e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        deselectAll();
+      } else if (ctrl && e.key === "Home") {
+        e.preventDefault();
+        if (slips.length > 0) setActiveStt(slips[0].stt);
+      } else if (ctrl && e.key === "End") {
+        e.preventDefault();
+        if (slips.length > 0) setActiveStt(slips[slips.length - 1].stt);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        if (activeStt) toggleSelect(activeStt);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (selectedStts.size > 0) handleAccept();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    isOpen,
+    slips,
+    activeStt,
+    selectedStts,
+    selectAll,
+    deselectAll,
+    toggleSelect,
+    handleAccept,
+    onClose,
+  ]);
+
+  if (!isOpen) return null;
+
+  const allSelected = slips.length > 0 && selectedStts.size === slips.length;
 
   return (
-    <Dialog
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Chọn Phiếu Xuất Từ Kho (ctbhch - KH_2014)"
-      width="max-w-5xl"
-      footer={
-        <>
-          <div className="flex-1 text-xs text-slate-500 font-mono">
-            Đã chọn: <strong className="text-primary-700">{selectedStts.size}</strong> / {slips.length} phiếu
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-neutral-900/60 backdrop-blur-[2px]">
+      <div className="flex flex-col w-full max-w-6xl bg-white rounded-xl shadow-2xl border border-neutral-300 overflow-hidden h-full max-h-[92vh]">
+        {/* ===== Modal Header (navy gradient) ===== */}
+        <header className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-primary-900 via-primary-800 to-neutral-900 text-white border-b border-primary-900 shrink-0">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-2 h-2 rounded-full bg-secondary-300" />
+            <h1 className="text-sm font-bold tracking-wide uppercase text-white">
+              Chọn Phiếu Xuất Kho
+            </h1>
           </div>
-          <Button variant="secondary" size="sm" onClick={selectAll} type="button">
-            Chọn tất cả (Ctrl+A)
-          </Button>
-          <Button variant="secondary" size="sm" onClick={deselectAll} type="button">
-            Bỏ chọn (Ctrl+U)
-          </Button>
-          <Button variant="outline" size="sm" onClick={onClose} type="button">
-            Hủy bỏ (Esc)
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleAccept}
-            disabled={selectedStts.size === 0}
-            type="button"
-          >
-            Chấp nhận (Enter)
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {/* Master Slips List */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-              <Warehouse className="w-3.5 h-3.5 text-primary-600" />
-              Danh sách phiếu xuất kho chưa lập hóa đơn (Grid1 - K_DsPx)
-            </h4>
-            <Button variant="ghost" size="sm" onClick={loadSlips} disabled={loading}>
-              <RefreshCw className={`w-3 h-3 mr-1 ${loading ? 'animate-spin' : ''}`} />
-              Làm mới
-            </Button>
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] text-neutral-300 font-mono bg-white/10 px-2 py-0.5 rounded border border-white/10 hidden sm:inline-block">
+              Esc: Đóng
+            </span>
+            <button
+              onClick={loadSlips}
+              disabled={loading}
+              className="p-1 text-neutral-300 hover:text-white hover:bg-white/10 rounded transition-colors w-6 h-6 flex items-center justify-center"
+              title="Làm mới (F5)"
+              type="button"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`}
+              />
+            </button>
+            <div className="flex items-center space-x-1">
+              <button
+                className="p-1 text-neutral-300 hover:text-white hover:bg-white/10 rounded transition-colors w-6 h-6 flex items-center justify-center"
+                title="Thu nhỏ"
+                type="button"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
+              <button
+                className="p-1 text-neutral-300 hover:text-white hover:bg-white/10 rounded transition-colors w-6 h-6 flex items-center justify-center"
+                title="Phóng to"
+                type="button"
+              >
+                <Square className="w-3 h-3" />
+              </button>
+              <button
+                onClick={onClose}
+                className="p-1 text-neutral-200 hover:text-white hover:bg-danger-600 rounded transition-colors w-6 h-6 flex items-center justify-center ml-1"
+                title="Đóng (Esc)"
+                type="button"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
+        </header>
 
-          <div className="border border-slate-300 rounded overflow-hidden max-h-[200px] overflow-y-auto bg-white">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead className="sticky top-0 bg-slate-200 z-10">
-                <tr>
-                  <th className="vfp-header w-10 text-center">Chọn</th>
-                  <th className="vfp-header w-24">Số PX</th>
-                  <th className="vfp-header w-24">Ngày xuất</th>
-                  <th className="vfp-header w-24">Mã KH</th>
-                  <th className="vfp-header min-w-[200px]">Tên khách hàng</th>
-                  <th className="vfp-header w-20">Mã xe</th>
-                  <th className="vfp-header w-16 text-right">Số dòng</th>
-                  <th className="vfp-header w-20 text-right">Số tấm</th>
-                  <th className="vfp-header w-20 text-right">SL bán</th>
-                </tr>
-              </thead>
-              <tbody>
-                {slips.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-6 text-center text-slate-400 italic">
-                      {loading ? 'Đang tải dữ liệu từ CSDL Kho...' : 'Không có phiếu xuất nào sẵn sàng'}
-                    </td>
+        {/* ===== Master / Detail Body ===== */}
+        <main className="flex-1 flex flex-col overflow-hidden p-3 gap-3 bg-neutral-100/70">
+          {/* TẦNG 1: BẢNG MASTER — DANH SÁCH PHIẾU XUẤT KHO */}
+          <section className="shrink-0 max-h-[200px] flex flex-col bg-white rounded border border-neutral-300 shadow-sm overflow-hidden">
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="sticky top-0 bg-neutral-100/95 backdrop-blur z-10 text-neutral-700 uppercase text-[11px] font-semibold border-b border-neutral-300 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+                  <tr className="divide-x divide-neutral-200">
+                    <th className="w-10 px-2 py-2 text-center" scope="col">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={(e) =>
+                          e.target.checked ? selectAll() : deselectAll()
+                        }
+                        className="rounded border-neutral-300 text-primary-800 focus:ring-primary-700 w-3.5 h-3.5 cursor-pointer"
+                        title="Chọn tất cả (Ctrl+A)"
+                      />
+                    </th>
+                    <th className="w-32 px-2.5 py-2 text-center" scope="col">
+                      Ngày
+                    </th>
+                    <th className="w-36 px-3 py-2" scope="col">
+                      Số phiếu
+                    </th>
+                    <th className="w-36 px-3 py-2" scope="col">
+                      Mã KH
+                    </th>
+                    <th className="w-1/3 min-w-[240px] px-3 py-2" scope="col">
+                      Tên KH
+                    </th>
+                    <th className="w-1/2 min-w-[280px] px-3 py-2" scope="col">
+                      Địa chỉ
+                    </th>
                   </tr>
-                ) : (
-                  slips.map((s) => {
-                    const isChecked = selectedStts.has(s.stt);
-                    const isActive = activeStt === s.stt;
-                    return (
-                      <tr
-                        key={s.stt}
-                        onClick={() => setActiveStt(s.stt)}
-                        className={`cursor-pointer transition-colors border-b border-slate-200 ${
-                          isActive ? 'bg-primary-50 font-medium' : 'hover:bg-slate-50'
-                        }`}
+                </thead>
+                <tbody className="divide-y divide-neutral-200 text-neutral-700 text-[12px]">
+                  {slips.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="px-4 py-6 text-center text-neutral-400 italic"
                       >
-                        <td
-                          className="vfp-cell text-center"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleSelect(s.stt);
-                          }}
-                        >
-                          {isChecked ? (
-                            <CheckSquare className="w-4 h-4 text-primary-600 mx-auto" />
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-400 mx-auto" />
-                          )}
-                        </td>
-                        <td className="vfp-cell font-mono font-bold text-primary-700">{s.so_ct || s.stt}</td>
-                        <td className="vfp-cell font-mono">{formatDate(s.ngay_ct)}</td>
-                        <td className="vfp-cell font-mono">{s.ma_dt}</td>
-                        <td className="vfp-cell">{s.ten_dt || '—'}</td>
-                        <td className="vfp-cell font-mono">{s.ma_xe || '—'}</td>
-                        <td className="vfp-cell text-right font-mono">{s.total_items}</td>
-                        <td className="vfp-cell text-right font-mono">{formatQuantity(s.total_so_tam)}</td>
-                        <td className="vfp-cell text-right font-mono font-semibold text-primary-700">
-                          {formatQuantity(s.total_so_luong9)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Detail Items of Active Slip */}
-        <div>
-          <h4 className="text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
-            <span>Chi tiết phiếu xuất đang chọn (Grid2 - K_CtPx)</span>
-            {activeStt && (
-              <Badge variant="info">Phiếu: {activeStt}</Badge>
-            )}
-          </h4>
-
-          <div className="border border-slate-300 rounded overflow-hidden max-h-[180px] overflow-y-auto bg-white">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead className="sticky top-0 bg-slate-200 z-10">
-                <tr>
-                  <th className="vfp-header w-8 text-center">STT</th>
-                  <th className="vfp-header w-24">Mã VT</th>
-                  <th className="vfp-header min-w-[200px]">Tên vật tư</th>
-                  <th className="vfp-header w-16 text-center">ĐVT</th>
-                  <th className="vfp-header w-16 text-center">Kho</th>
-                  <th className="vfp-header w-16 text-right">Số tấm</th>
-                  <th className="vfp-header w-16 text-right">Hệ số</th>
-                  <th className="vfp-header w-20 text-right">SL bán</th>
-                  <th className="vfp-header w-20 text-right">SL xuất</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeItems.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-6 text-center text-slate-400 italic">
-                      {loadingDetail ? 'Đang nạp chi tiết...' : 'Chọn một phiếu ở trên để xem chi tiết'}
-                    </td>
-                  </tr>
-                ) : (
-                  activeItems.map((item, idx) => (
-                    <tr key={item.stt0 || idx} className="hover:bg-slate-50 border-b border-slate-200">
-                      <td className="vfp-cell text-center text-slate-400 font-mono">{idx + 1}</td>
-                      <td className="vfp-cell font-mono font-medium text-slate-700">{item.ma_vt}</td>
-                      <td className="vfp-cell font-medium text-slate-800">{item.ten_vt || '—'}</td>
-                      <td className="vfp-cell text-center text-slate-600">{item.dvt || '—'}</td>
-                      <td className="vfp-cell text-center font-mono text-slate-600">{item.ma_kho || '—'}</td>
-                      <td className="vfp-cell text-right font-mono">{formatQuantity(item.so_tam)}</td>
-                      <td className="vfp-cell text-right font-mono">{formatQuantity(item.he_so8)}</td>
-                      <td className="vfp-cell text-right font-mono font-medium text-slate-800">
-                        {formatQuantity(item.so_luong8)}
-                      </td>
-                      <td className="vfp-cell text-right font-mono font-semibold text-primary-700">
-                        {formatQuantity(item.so_luong9)}
+                        {loading
+                          ? "Đang tải dữ liệu từ CSDL Kho..."
+                          : "Không có phiếu xuất nào sẵn sàng"}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    slips.map((s) => {
+                      const isChecked = selectedStts.has(s.stt);
+                      const isActive = activeStt === s.stt;
+                      return (
+                        <tr
+                          key={s.stt}
+                          onClick={() => setActiveStt(s.stt)}
+                          className={`cursor-pointer transition-colors divide-x divide-neutral-200/80 ${
+                            isActive
+                              ? "bg-primary-50/70 border-l-4 border-l-primary-800 hover:bg-primary-100/60 font-medium"
+                              : "hover:bg-primary-50/40"
+                          }`}
+                        >
+                          <td className="px-2 py-1.5 text-center">
+                            <div className="flex items-center justify-center space-x-1">
+                              {isActive && (
+                                <span className="text-primary-900 text-[10px] font-black">
+                                  ►
+                                </span>
+                              )}
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleSelect(s.stt)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="rounded border-primary-400 text-primary-800 focus:ring-primary-800 w-3.5 h-3.5 cursor-pointer"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-2.5 py-1.5 text-center font-mono tabular-nums text-primary-900">
+                            {formatDate(s.ngay_ct)}
+                          </td>
+                          <td className="px-3 py-1.5 font-bold text-primary-900">
+                            {s.so_ct || s.stt}
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-neutral-800">
+                            {s.ma_dt}
+                          </td>
+                          <td className="px-3 py-1.5 text-neutral-900 font-semibold">
+                            {s.ten_dt || "—"}
+                          </td>
+                          <td
+                            className="px-3 py-1.5 text-neutral-600 truncate"
+                            title={s.dia_chi || ""}
+                          >
+                            {s.dia_chi || "—"}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                  {/* Dòng trống bổ sung — giữ chiều cao bảng như mẫu Pickup.html */}
+                  {Array.from({
+                    length: Math.max(0, 6 - slips.length),
+                  }).map((_, i) => (
+                    <tr
+                      key={`filler-${i}`}
+                      className={`h-7 divide-x divide-neutral-100 ${
+                        i % 2 === 1 ? "bg-neutral-50/20" : "bg-white"
+                      }`}
+                    >
+                      <td colSpan={6} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* TẦNG 2: BẢNG DETAIL — CHI TIẾT HÀNG HÓA VẬT TƯ */}
+          <section className="flex-1 flex flex-col bg-white rounded border border-neutral-300 shadow-sm overflow-hidden h-full">
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="sticky top-0 bg-neutral-100/95 backdrop-blur z-10 text-neutral-700 uppercase text-[11px] font-semibold border-b border-neutral-300 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+                  <tr className="divide-x divide-neutral-200">
+                    <th className="w-40 px-3 py-2 text-center" scope="col">
+                      Vật tư (Mã VT)
+                    </th>
+                    <th
+                      className="min-w-[240px] px-3 py-2 text-left"
+                      scope="col"
+                    >
+                      Tên vật tư hàng hóa
+                    </th>
+                    <th className="w-24 px-2.5 py-2 text-center" scope="col">
+                      Mã kho
+                    </th>
+                    <th className="w-20 px-2 py-2 text-center" scope="col">
+                      ĐVT
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right" scope="col">
+                      Số tấm
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right" scope="col">
+                      Hệ số
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right" scope="col">
+                      SL bán
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-200 text-neutral-700 text-[12px]">
+                  {activeItems.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-4 py-6 text-center text-neutral-400 italic"
+                      >
+                        {loadingDetail
+                          ? "Đang nạp chi tiết..."
+                          : "Chọn một phiếu ở trên để xem chi tiết"}
+                      </td>
+                    </tr>
+                  ) : (
+                    activeItems.map((item, idx) => (
+                      <tr
+                        key={item.stt0 || idx}
+                        className={`hover:bg-secondary-50/40 transition-colors divide-x divide-neutral-200 font-medium ${
+                          idx % 2 === 1 ? "bg-neutral-50/20" : ""
+                        }`}
+                      >
+                        <td className="px-3 py-2 font-mono text-primary-900 font-bold bg-neutral-50/50 text-center">
+                          {item.ma_vt}
+                        </td>
+                        <td className="px-3 py-2 text-neutral-900">
+                          <div className="flex items-center">
+                            <span className="w-1.5 h-1.5 rounded-full bg-secondary-600 mr-2 shrink-0" />
+                            <span className="font-medium">
+                              {item.ten_vt || "—"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-2.5 py-2 text-center font-semibold text-neutral-800 bg-neutral-50/30">
+                          {item.ma_kho || "—"}
+                        </td>
+                        <td className="px-2 py-2 text-center text-neutral-600">
+                          {item.dvt || "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-neutral-700">
+                          {formatQuantity(item.so_tam)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-neutral-500">
+                          {formatQuantity(item.he_so8)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums text-primary-900 font-bold">
+                          {formatQuantity(item.so_luong9)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                  {/* Dòng trống bổ sung — giữ chiều cao bảng như mẫu Pickup.html */}
+                  {Array.from({
+                    length: Math.max(0, 8 - activeItems.length),
+                  }).map((_, i) => (
+                    <tr
+                      key={`detail-filler-${i}`}
+                      className={`h-7 divide-x divide-neutral-100 ${
+                        i % 2 === 1 ? "bg-neutral-50/20" : "bg-white"
+                      }`}
+                    >
+                      <td colSpan={7} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </main>
+
+        {/* ===== Modal Footer ===== */}
+        <footer className="px-4 py-3 bg-neutral-100 border-t border-neutral-300 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          {/* Bộ đếm phiếu đã chọn */}
+          <div className="flex items-center space-x-3 w-full sm:w-auto">
+            <div className="flex items-center bg-white px-3 py-1.5 rounded border border-neutral-300 shadow-sm">
+              <label className="text-xs sm:text-sm font-bold text-neutral-700 mr-2 whitespace-nowrap">
+                Số phiếu đã chọn
+              </label>
+              <div className="flex items-center font-mono font-bold text-sm">
+                <input
+                  readOnly
+                  value={selectedStts.size}
+                  className="w-10 h-7 text-center font-bold text-primary-900 bg-primary-50 border border-primary-400 rounded p-0 text-sm focus:outline-none select-all"
+                />
+                <span className="mx-2 text-neutral-400 text-base">/</span>
+                <span className="inline-flex items-center justify-center min-w-[28px] h-7 px-2 bg-neutral-200 text-neutral-700 rounded text-sm">
+                  {slips.length}
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
+
+          {/* Hướng dẫn phím tắt & nút thao tác */}
+          <div className="flex items-center justify-end space-x-2.5 w-full sm:w-auto">
+            <div className="hidden lg:flex items-center space-x-2 text-[11px] text-neutral-500 mr-2">
+              <kbd>Space</kbd>
+              <span>Đánh dấu</span>
+              <kbd>Ctrl+A</kbd>
+              <span>Chọn tất cả</span>
+              <kbd>Enter</kbd>
+              <span>Chấp nhận</span>
+            </div>
+            <Button
+              variant="outline"
+              size="md"
+              onClick={onClose}
+              type="button"
+              className="min-w-[90px]"
+            >
+              <X className="w-3.5 h-3.5 mr-1.5 text-neutral-500" />
+              Hủy bỏ
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={handleAccept}
+              disabled={selectedStts.size === 0}
+              type="button"
+              className="min-w-[110px]"
+            >
+              <Check className="w-3.5 h-3.5 mr-1.5 text-success-300" />
+              Chấp nhận
+            </Button>
+          </div>
+        </footer>
       </div>
-    </Dialog>
+    </div>
   );
 };

@@ -3,34 +3,107 @@
 @tailwind utilities;
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
-    @apply bg-slate-100 text-slate-800 font-sans text-sm;
+    @apply bg-surface text-on-surface font-sans text-[13px];
   }
 }
 
-/* Custom scrollbar for data tables */
+/* ===== Scrollbar thanh mảnh chuẩn desktop app ===== */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: #f1f5f9;
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
-/* Compact table cells */
+/* ===== Bảng dữ liệu độ nén cao (data dense) ===== */
+.dense-table td,
+.dense-table th {
+  padding-top: 0.38rem;
+  padding-bottom: 0.38rem;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+  white-space: nowrap;
+}
+
+/* Header cố định khi cuộn */
+.table-sticky-header thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: inset 0 -1px 0 #cbd5e1;
+}
+
+/* Dòng đang chọn — Navy Deep highlight */
+.selected-row {
+  background-color: #e0f2fe !important;
+  position: relative;
+}
+.selected-row td:first-child::before {
+  content: "▶";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: #0284c7;
+}
+
+/* ===== Keyboard shortcut badge (<kbd>) ===== */
+kbd {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  border: 1px solid #cbd5e1;
+  background-color: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Compact table cells — giảm tối đa padding để tăng số dòng hiển thị */
 .vfp-cell {
-  @apply px-2 py-1 border-r border-b border-slate-200 text-xs truncate;
+  @apply px-1.5 py-[1px] border-r border-b border-neutral-200 text-xs truncate leading-tight;
 }
 
 .vfp-header {
-  @apply px-2 py-1.5 bg-slate-200 font-semibold text-slate-700 text-xs border-r border-b border-slate-300 text-left select-none;
+  @apply px-1.5 py-[2px] bg-neutral-100 font-semibold text-neutral-600 text-[11px] uppercase tracking-wider border-r border-b border-neutral-300 text-left select-none leading-tight;
+}
+
+/* ===== Form field dày đặc cho màn Sửa/Thêm chứng từ (ctbhd) ===== */
+.erp-input {
+  font-size: 0.775rem;
+  line-height: 1.15;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+  transition: all 0.15s ease-in-out;
+}
+.erp-input:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 1.5px rgba(2, 132, 199, 0.25);
+  outline: none;
+  background-color: #ffffff !important;
+}
+.erp-label {
+  font-size: 0.725rem;
+  font-weight: 600;
+  color: #334155;
+  white-space: nowrap;
 }
 
 /* ===== Print styles cho mẫu in phiếu (PrintPreview) ===== */
@@ -61,7 +134,7 @@
   }
 
   /* Bỏ nền xám của overlay + scrollbar */
-  .bg-slate-900\/40 {
+  .bg-neutral-900\/40 {
     background: transparent !important;
     backdrop-filter: none !important;
   }

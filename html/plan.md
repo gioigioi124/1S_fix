@@ -18,6 +18,7 @@
 ## 📑 MỤC LỤC
 
 1. [Tổng quan & Phạm vi](#1-tổng-quan--phạm-vi)
+   - 1.4. Quy ước đặt tên (tránh nhầm với VFP)
 2. [Quyết định kỹ thuật đã chốt](#2-quyết-định-kỹ-thuật-đã-chốt)
 3. [Kiến trúc hệ thống](#3-kiến-trúc-hệ-thống)
 4. [Cấu trúc thư mục dự án](#4-cấu-trúc-thư-mục-dự-án)
@@ -64,6 +65,35 @@ Phần mềm kế toán 1S hiện chạy trên **Visual FoxPro 8.0** (client) k�
 - Không thay thế các form khác (`ctckh`, `ctnxh`, `kct04`...).
 - Không sửa đổi cấu trúc bảng SQL hiện có.
 - Không can thiệp vào các file `.scx/.sct/.fxp` của VFP (trừ khi cần đối chiếu).
+
+### 1.4. Quy ước đặt tên (BẮT BUỘC — tránh nhầm với VFP)
+
+> **Tên trên web KHÁC HOÀN TOÀN tên form VFP.** Khi trao đổi (họp, chat, ticket, PR),
+> luôn dùng **tên nghiệp vụ** hoặc **tên component web**; chỉ ghi kèm mã VFP trong ngoặc
+> khi thật sự cần đối chiếu. **Tuyệt đối không sửa file `.scx/.sct/.fxp` của VFP.**
+
+**Bảng quy ước 3 tầng tên song song:**
+
+| Mã VFP   | Tên nghiệp vụ (gọi khi làm việc) | Component web  | Route (đề xuất)          |
+| :------- | :------------------------------- | :------------- | :----------------------- |
+| `ctbhh`  | Danh sách phiếu xuất bán         | `VoucherList`  | `/sales-invoices`        |
+| `ctbhd`  | Chi tiết / sửa phiếu xuất bán    | `VoucherForm`  | `/sales-invoices/:stt`   |
+| `ctbhch` | Chọn phiếu xuất kho              | `PickupDialog` | (dialog, không có route) |
+
+**Nguyên tắc áp dụng:**
+
+1. **Giao tiếp:** nói **tên nghiệp vụ** (tiếng Việt) + ngoặc mã VFP nếu cần.
+   _Ví dụ:_ "Màn **Chi tiết phiếu** (`ctbhd`) bị lệch cột — nhớ đừng đụng file VFP nhé."
+2. **Trong code:** dùng tiền tố component web (`Voucher*`), **không** dùng `ctbhh/ctbhd/ctbhch`
+   làm tên biến/hàm/component.
+3. **Trong PR / commit / ticket:** tiêu đề ghi theo **cột "Component web"** hoặc **"Tên nghiệp vụ"**,
+   phần mô tả mới ghi mã VFP nếu liên quan.
+4. **Trên UI:** tiêu đề hiển thị tiếng Việt ("Phiếu Xuất Bán", "Sửa Chứng Từ"), có thể ghi phụ
+   `(web)` để phân biệt khi chụp màn hình so sánh với VFP.
+5. **Tài liệu:** mọi đặc tả mới dùng tên web; giữ bảng ánh xạ tại §1.4 làm nguồn tham chiếu duy nhất.
+
+> ⚠️ **Bẫy thường gặp:** nhầm `ctbhd` (form **sửa** phiếu) với `ctbhch` (form **chọn phiếu xuất kho**).
+> Trên web, `VoucherForm` = sửa phiếu; `PickupDialog` = chọn phiếu xuất kho — hai việc khác nhau.
 
 ---
 
@@ -912,7 +942,8 @@ Hệ thống phục vụ nhiều kế toán trên LAN, danh mục `DmVt`/`DmDt` 
 7. **File tạm** đặt trong `scratch/`, dọn sạch sau khi xong.
 8. **Hotkey phải giống hệt VFP** — dùng đúng `F2/F3/F4/F6/F7/F8/F9`, `Shift+F7`, `Ctrl+F7`, `Ctrl+F2`, `Ctrl+F3`, `Ctrl+A`, `Ctrl+U`, `Ctrl+Home`, `Ctrl+End`, `Space`, `Enter`, `Esc`. Không tự ý đổi tổ hợp phím.
 9. **Toàn vẹn dữ liệu (ACID)** — Atomicity, Consistency, Isolation, Durability là bắt buộc cho mọi thao tác ghi (xem §8.8). Không ghi ngoài transaction.
-10. **Tối ưu hiệu năng** — tuân thủ quy tắc P1–P23 (xem §8.9): không `SELECT *`, phân trang server-side, cache danh mục, virtual hóa lưới, tránh N+1 query.
+10. **Tên web ≠ tên VFP** — dùng quy ước tại §1.4: `VoucherList` (ctbhh), `VoucherForm` (ctbhd), `PickupDialog` (ctbhch). Không đặt tên `ctbhh/ctbhd/ctbhch` trong code web.
+11. **Tối ưu hiệu năng** — tuân thủ quy tắc P1–P23 (xem §8.9): không `SELECT *`, phân trang server-side, cache danh mục, virtual hóa lưới, tránh N+1 query.
 
 ### 11.3. Điểm cần người dùng cung cấp thêm
 

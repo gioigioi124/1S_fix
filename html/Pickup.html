@@ -1,0 +1,144 @@
+<!DOCTYPE html><html class="h-full bg-slate-100" lang="vi" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Chọn Phiếu Xuất Kho - ERP Enterprise Management</title>
+<!-- Tailwind CSS v3 with Forms & Container Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Custom Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a', // Deep Navy chủ đạo
+              950: '#172554'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Consolas', 'Menlo', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-scrollbar">
+    /* Tùy chỉnh thanh cuộn mỏng chuyên nghiệp cho bảng kế toán */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body class="h-full flex items-center justify-center p-2 sm:p-4 text-slate-800 antialiased font-sans select-none bg-slate-900/60 backdrop-blur-[2px] py-2">
+<!-- BEGIN: ModalContainer -->
+<!-- Dialog chính chứa Master - Detail với viền bóng đổ và góc bo chuẩn ERP -->
+<div class="flex flex-col w-full max-w-6xl bg-white rounded-xl shadow-2xl border border-slate-300 overflow-hidden h-full" data-purpose="lookup-modal">
+<!-- BEGIN: ModalHeader -->
+<!-- Tiêu đề Dialog mô phỏng nguyên bản "$ Chọn phieu xuat kho" được hiện đại hóa -->
+<header class="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-brand-900 via-brand-800 to-slate-900 text-white border-b border-brand-950 shrink-0"><div class="flex items-center space-x-2.5"><div class="w-2 h-2 rounded-full bg-blue-400"></div><h1 class="text-sm font-bold tracking-wide uppercase text-white">CHỌN PHIẾU XUẤT KHO</h1></div><div class="flex items-center space-x-2"><span class="text-[11px] text-slate-300 font-mono bg-white/10 px-2 py-0.5 rounded border border-white/10 hidden sm:inline-block">Esc: Đóng</span><div class="flex items-center space-x-1"><button class="p-1 text-slate-300 hover:text-white hover:bg-white/10 rounded transition-colors text-xs w-6 h-6 flex items-center justify-center" title="Thu nhỏ" type="button"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 12H4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg></button><button class="p-1 text-slate-300 hover:text-white hover:bg-white/10 rounded transition-colors text-xs w-6 h-6 flex items-center justify-center" title="Phóng to" type="button"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect height="16" rx="1" stroke-width="2" width="16" x="4" y="4"></rect></svg></button><button class="p-1 text-slate-200 hover:text-white hover:bg-red-600 rounded transition-colors text-xs w-6 h-6 flex items-center justify-center ml-1" title="Đóng (Esc)" type="button"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"></svg></button></div></div></header>
+<!-- END: ModalHeader -->
+<!-- BEGIN: SearchFilterToolbar -->
+<!-- Thanh công cụ tìm kiếm và lọc dữ liệu đa chiều -->
+
+<!-- END: SearchFilterToolbar -->
+<!-- BEGIN: MasterDetailBody -->
+<!-- Vùng hiển thị cấu trúc phân tầng: 2 Bảng Master & Detail -->
+<main class="flex-1 flex flex-col overflow-hidden p-3 gap-3 bg-slate-100/70">
+<!-- ============================================== -->
+<!-- TẦNG 1: BẢNG MASTER - DANH SÁCH PHIẾU XUẤT KHO -->
+<!-- ============================================== -->
+<section class="shrink-0 max-h-[200px] flex flex-col bg-white rounded border border-slate-300 shadow-sm overflow-hidden" data-purpose="master-table-section">
+<!-- Thanh tiêu đề bảng Master -->
+
+<!-- Bảng danh sách phiếu Master có cố định Header -->
+<div class="flex-1 overflow-auto">
+<table class="w-full text-left text-xs border-collapse">
+<thead class="sticky top-0 bg-slate-100/95 backdrop-blur z-10 text-slate-700 uppercase text-[11px] font-semibold border-b border-slate-300 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"><tr class="divide-x divide-slate-200"><th class="w-10 px-2 py-2 text-center bg-slate-100" scope="col"><span class="sr-only">Chọn</span><input checked="" class="rounded border-slate-300 text-brand-800 focus:ring-brand-700 w-3.5 h-3.5" type="checkbox"></th><th class="w-32 px-2.5 py-2 text-center" scope="col">Ngày</th><th class="w-36 px-3 py-2" scope="col">Số phiếu</th><th class="w-36 px-3 py-2" scope="col">Mã KH</th><th class="w-1/3 min-w-[240px] px-3 py-2" scope="col">Tên KH</th><th class="w-1/2 min-w-[280px] px-3 py-2" scope="col">Địa chỉ</th></tr></thead>
+<tbody class="divide-y divide-slate-200 text-slate-700 text-[12px]"><tr class="bg-brand-50/70 border-l-4 border-l-brand-800 hover:bg-brand-100/60 font-medium transition-colors cursor-pointer divide-x divide-slate-200/80"><td class="px-2 py-1.5 text-center bg-brand-100/40"><div class="flex items-center justify-center space-x-1"><span class="text-brand-900 text-[10px] font-black">►</span><input checked="" class="rounded border-brand-400 text-brand-800 focus:ring-brand-800 w-3.5 h-3.5 cursor-pointer" type="checkbox" placeholder="on" value=""></div></td><td class="px-2.5 py-1.5 text-center font-mono tabular-nums text-brand-900">22/10/2026</td><td class="px-3 py-1.5 font-bold text-brand-900">K04/BH890</td><td class="px-3 py-1.5 font-mono text-slate-800">24000036</td><td class="px-3 py-1.5 text-slate-900 font-semibold">Mai Hương - Yên Dũng</td><td class="px-3 py-1.5 text-slate-600 truncate" title="TT Nham Biền - Yên Dũng - Bắc Giang">TT Nham Biền - Yên Dũng - Bắc Giang</td></tr><tr class="h-7 bg-white divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-slate-50/20 divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-white divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-slate-50/20 divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-white divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-slate-50/20 divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-white divide-x divide-slate-100"><td colspan="6"></td></tr><tr class="h-7 bg-slate-50/20 divide-x divide-slate-100"><td colspan="6"></td></tr></tbody>
+</table>
+</div>
+</section>
+<!-- ============================================== -->
+<!-- TẦNG 2: BẢNG DETAIL - CHI TIẾT HÀNG HÓA VẬT TƯ -->
+<!-- ============================================== -->
+<section class="flex-1 flex flex-col bg-white rounded border border-slate-300 shadow-sm overflow-hidden h-full" data-purpose="detail-table-section">
+<!-- Header thông tin phiếu con đang xem chi tiết -->
+
+<!-- Bảng danh sách chi tiết vật tư theo form kế toán chuẩn -->
+<div class="flex-1 overflow-auto">
+<table class="w-full text-left text-xs border-collapse"><thead class="sticky top-0 bg-slate-100/95 backdrop-blur z-10 text-slate-700 uppercase text-[11px] font-semibold border-b border-slate-300 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"><tr class="divide-x divide-slate-200"><th class="w-40 px-3 py-2 text-center" scope="col">Vật tư (Mã VT)</th><th class="min-w-[240px] px-3 py-2 text-left" scope="col">Tên vật tư hàng hóa</th><th class="w-24 px-2.5 py-2 text-center" scope="col">Mã kho</th><th class="w-20 px-2 py-2 text-center" scope="col">ĐVT</th><th class="w-24 px-3 py-2 text-right" scope="col">Số tấm</th><th class="w-24 px-3 py-2 text-right" scope="col">Hệ số</th><th class="w-24 px-3 py-2 text-right" scope="col">SL bán</th></tr></thead><tbody class="divide-y divide-slate-200 text-slate-700 text-[12px]"><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60080515019012</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Đệm bông ép gấp 3 5F(150x190) FLY</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">cái</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">1.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium bg-slate-50/20"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60080516020012</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Đệm bông ép gấp 3 9F(160x200) FLY</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">cái</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">2.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">2.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60080518020015</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Đệm bông ép gấm kháng khuẩn 14F(180x200)</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">cái</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">1.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium bg-slate-50/20"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60020100450065</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Ruột gối đầu bông hạt kháng khuẩn 45x65</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">chiếc</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">4.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">4.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60020200350100</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Ruột gối ôm bông ép Micro 35x100</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">chiếc</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">2.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">2.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium bg-slate-50/20"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60090118020000</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Bộ ga chun chần vỏ chăn Tencel 180x200</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">bộ</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">1.00</td></tr><tr class="hover:bg-blue-50/40 transition-colors divide-x divide-slate-200 font-medium"><td class="px-3 py-2 font-mono text-brand-900 font-bold bg-slate-50/50 text-center">60090320022000</td><td class="px-3 py-2 text-slate-900"><div class="flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-2 shrink-0"></span><span class="font-medium">Chăn đông sông Hồng siêu nhẹ 200x220</span></div></td><td class="px-2.5 py-2 text-center font-semibold text-slate-800 bg-slate-50/30">K04</td><td class="px-2 py-2 text-center text-slate-600">chiếc</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-700">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-slate-500">1.00</td><td class="px-3 py-2 text-right font-mono tabular-nums text-brand-900 font-bold">1.00</td></tr><tr class="h-7 bg-white divide-x divide-slate-100"><td colspan="7"></td></tr><tr class="h-7 bg-slate-50/20 divide-x divide-slate-100"><td colspan="7"></td></tr></tbody><tfoot class="sticky bottom-0 bg-slate-100 font-semibold text-slate-800 border-t-2 border-slate-300 text-xs shadow-inner"><tr class="divide-x divide-slate-200"><td colspan="7" class="p-0"></td></tr></tfoot></table>
+</div>
+</section>
+</main>
+<!-- END: MasterDetailBody -->
+<!-- BEGIN: ModalFooter -->
+<!-- Thanh tổng hợp: Số phiếu đã chọn [ 1 ] / [ 1 ] và các nút Chấp nhận, Hủy bỏ -->
+<footer class="px-4 py-3 bg-slate-100 border-t border-slate-300 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0" data-purpose="dialog-footer">
+<!-- Phía trái: Bộ đếm phiếu đã chọn đúng đặc trưng giao diện tham khảo: "Số phiếu đã chọn [ 1 ] / [ 1 ]" -->
+<div class="flex items-center space-x-3 w-full sm:w-auto">
+<div class="flex items-center bg-white px-3 py-1.5 rounded border border-slate-300 shadow-sm">
+<label class="text-xs sm:text-sm font-bold text-slate-700 mr-2 whitespace-nowrap" for="selectedCountInput">
+            Số phiếu đã chọn
+          </label>
+<div class="flex items-center font-mono font-bold text-sm">
+<!-- Ô giá trị phiếu được chọn -->
+<input class="w-10 h-7 text-center font-bold text-brand-900 bg-brand-50 border border-brand-400 rounded p-0 text-sm focus:outline-none select-all" id="selectedCountInput" readonly="" type="text" value="1">
+<span class="mx-2 text-slate-400 text-base">/</span>
+<!-- Tổng số phiếu hiện có -->
+<span class="inline-flex items-center justify-center min-w-[28px] h-7 px-2 bg-slate-200 text-slate-700 rounded text-sm">1</span>
+</div>
+</div>
+<!-- Thống kê phụ (tổng SL & thành tiền chọn) -->
+<div class="hidden md:flex items-center text-xs text-slate-600 space-x-3 pl-2 border-l border-slate-300">
+
+
+</div>
+</div>
+<!-- Phía phải: Hướng dẫn phím tắt & Các nút thao tác Chấp nhận / Hủy bỏ -->
+<div class="flex items-center justify-end space-x-2.5 w-full sm:w-auto">
+<!-- Hướng dẫn phím tắt bàn phím -->
+<div class="hidden lg:flex items-center space-x-2 text-[11px] text-slate-500 mr-2">
+
+
+</div>
+<!-- Nút Hủy bỏ (Secondary Button) -->
+<button class="px-4 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-300 hover:border-slate-400 rounded shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-300 transition-all flex items-center min-w-[90px] justify-center" type="button">
+<svg class="w-3.5 h-3.5 mr-1.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+          Hủy bỏ
+        </button>
+<!-- Nút Chấp nhận (Primary Button màu Navy chuẩn ERP) -->
+<button class="px-5 py-2 text-xs font-semibold text-white bg-brand-900 hover:bg-brand-800 active:bg-brand-950 rounded shadow focus:outline-none focus:ring-2 focus:ring-brand-700 focus:ring-offset-1 transition-all flex items-center min-w-[110px] justify-center" type="button">
+<svg class="w-3.5 h-3.5 mr-1.5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          Chấp nhận
+        </button>
+</div>
+</footer>
+<!-- END: ModalFooter -->
+</div>
+<!-- END: ModalContainer -->
+
+
+
+
+</body></html>

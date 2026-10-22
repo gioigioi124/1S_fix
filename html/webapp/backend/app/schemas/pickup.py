@@ -30,3 +30,26 @@ class PickupSlipSchema(BaseModel):
 class PickupDetailResponse(BaseModel):
     stt: str
     items: List[PickupItemSchema]
+
+class PickupAcceptRequest(BaseModel):
+    """Danh sách Stt phiếu xuất kho người dùng đã chọn (nút Chấp nhận - ctbhch)."""
+    stts: List[str]
+
+class PickupAcceptRow(BaseModel):
+    """Dòng dữ liệu ánh xạ sang K_CtTemp (dòng chi tiết chứng từ) — chỉ trả về, KHÔNG ghi."""
+    stt_px: str
+    stt0_px: str
+    ma_vt: str
+    ten_vt: Optional[str] = ""
+    dvt: Optional[str] = ""
+    dvt_ban: Optional[str] = ""
+    ma_kho: Optional[str] = ""
+    so_tam: float = 0.0
+    he_so8: float = 1.0
+    so_luong8: float = 0.0
+    so_luong9: float = 0.0
+    loai_vt: Optional[str] = "1"
+
+class PickupAcceptResponse(BaseModel):
+    rows: List[PickupAcceptRow]
+    total_rows: int = 0

@@ -16,7 +16,7 @@ class VoucherRepository:
         self.vp_db = settings.DB_VP
         self.sys_db = settings.DB_SYS
 
-    def list_vouchers(
+    def _build_where(
         self,
         ma_ct: Optional[str] = "X1",
         ngay_ct1: Optional[str] = None,
@@ -35,16 +35,11 @@ class VoucherRepository:
         tien_nt1: Optional[float] = None,
         tien_nt2: Optional[float] = None,
         filter_by_user: Optional[str] = None,
-        page: int = 1,
-        page_size: int = 50
-    ) -> VoucherListResponse:
+    ) -> Tuple[str, List[Any]]:
         """
-        Query vouchers with filtering and pagination. 100% READ-ONLY (SELECT only).
+        Dựng mệnh đề WHERE dùng lại được (alias `h` = CtBH) + danh sách params.
+        Tách riêng để tái sử dụng và dễ bảo trì.
         """
-        page = max(1, page)
-        page_size = max(1, min(page_size, 500))
-        offset = (page - 1) * page_size
-
         where_clauses: List[str] = []
         params: List[Any] = []
 
@@ -97,26 +92,75 @@ class VoucherRepository:
             where_clauses.append("h.UserName = ?")
             params.append(filter_by_user.strip())
 
-        # Filters involving details (ma_kho, ma_vt)
+        # Bộ lọc liên quan chi tiết (ma_kho, ma_vt). Alias `dv` để không đụng các query khác.
         detail_filters = []
         detail_params = []
         if ma_kho:
-            detail_filters.append("d.Ma_Kho = ?")
+            detail_filters.append("dv.Ma_Kho = ?")
             detail_params.append(ma_kho)
         if ma_vt:
-            detail_filters.append("d.Ma_Vt = ?")
+            detail_filters.append("dv.Ma_Vt = ?")
             detail_params.append(ma_vt)
 
         if detail_filters:
             where_clauses.append(f"""
                 EXISTS (
-                    SELECT 1 FROM {self.vp_db}.dbo.CtBH0 d WITH (NOLOCK)
-                    WHERE d.Stt = h.Stt AND {" AND ".join(detail_filters)}
+                    SELECT 1 FROM {self.vp_db}.dbo.CtBH0 dv WITH (NOLOCK)
+                    WHERE dv.Stt = h.Stt AND {" AND ".join(detail_filters)}
                 )
             """)
             params.extend(detail_params)
 
-        where_sql = " AND ".join(where_clauses)
+        return " AND ".join(where_clauses), params
+
+    def list_vouchers(
+        self,
+        ma_ct: Optional[str] = "X1",
+        ngay_ct1: Optional[str] = None,
+        ngay_ct2: Optional[str] = None,
+        so_ct1: Optional[str] = None,
+        so_ct2: Optional[str] = None,
+        ma_dt: Optional[str] = None,
+        ma_bp: Optional[str] = None,
+        ma_hd: Optional[str] = None,
+        ma_nx: Optional[str] = None,
+        ma_kho: Optional[str] = None,
+        ma_vt: Optional[str] = None,
+        ma_tte: Optional[str] = None,
+        tk: Optional[str] = None,
+        tk_du: Optional[str] = None,
+        tien_nt1: Optional[float] = None,
+        tien_nt2: Optional[float] = None,
+        filter_by_user: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50
+    ) -> VoucherListResponse:
+        """
+        Query vouchers with filtering and pagination. 100% READ-ONLY (SELECT only).
+        """
+        page = max(1, page)
+        page_size = max(1, min(page_size, 500))
+        offset = (page - 1) * page_size
+
+        where_sql, params = self._build_where(
+            ma_ct=ma_ct,
+            ngay_ct1=ngay_ct1,
+            ngay_ct2=ngay_ct2,
+            so_ct1=so_ct1,
+            so_ct2=so_ct2,
+            ma_dt=ma_dt,
+            ma_bp=ma_bp,
+            ma_hd=ma_hd,
+            ma_nx=ma_nx,
+            ma_kho=ma_kho,
+            ma_vt=ma_vt,
+            ma_tte=ma_tte,
+            tk=tk,
+            tk_du=tk_du,
+            tien_nt1=tien_nt1,
+            tien_nt2=tien_nt2,
+            filter_by_user=filter_by_user,
+        )
 
         # 1. Total counts and summary totals
         summary_sql = f"""

@@ -35,6 +35,9 @@ Script sẽ tự động khởi động:
 - Frontend Vite tại `http://localhost:5173`
 - Mở trình duyệt web truy cập tự động.
 
+> **Routes (plan §1.4):** `/sales-invoices` (danh sách phiếu) và
+> `/sales-invoices/:stt` (chi tiết/sửa phiếu). Không có màn đăng nhập ở Giai đoạn 1.
+
 ### 2. Khởi chạy thủ công
 
 #### Backend:

@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from app.services.pickup_service import pickup_service
+from app.schemas.pickup import PickupAcceptRequest
 
 router = APIRouter(prefix="/api/pickup", tags=["Pickup"])
 
@@ -37,4 +38,16 @@ def get_pickup_detail(stt: str):
     return {
         "success": True,
         "data": detail.model_dump()
+    }
+
+@router.post("/accept", response_model=dict)
+def accept_pickup_slips(req: PickupAcceptRequest):
+    """
+    Nhận các phiếu xuất kho đã chọn và trả về danh sách dòng hàng đã ánh xạ
+    sang K_CtTemp (chi tiết chứng từ). 100% READ-ONLY — KHÔNG ghi CSDL.
+    """
+    result = pickup_service.accept_pickup(stts=req.stts)
+    return {
+        "success": True,
+        "data": result.model_dump()
     }
