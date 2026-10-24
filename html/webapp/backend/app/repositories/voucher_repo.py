@@ -1,17 +1,40 @@
 import logging
 import math
+import random
+import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from app.config import settings
-from app.database import get_db_cursor
+from app.database import get_db_cursor, get_db_transaction
 from app.utils.unicode import tcvn_to_unicode
+from app.utils.money import round_amount, round_vnd
+from app.repositories.debt_repo import debt_repository
 from app.schemas.voucher import (
     VoucherHeaderSchema, VoucherDetailSchema, VoucherDetailResponse,
-    VoucherListResponse, VoucherListPagination, VoucherSummary
+    VoucherListResponse, VoucherListPagination, VoucherSummary,
+    VoucherCreateRequest, VoucherUpdateRequest, VoucherSaveResponse,
+    VoucherDeleteResponse, CheckNumberRequest, CheckNumberResponse
 )
 
 logger = logging.getLogger("app.repositories.voucher")
 
+def increment_voucher_number(s: str) -> str:
+    """
+    Auto-increments trailing numeric part of voucher number.
+    e.g. 'HD4081' -> 'HD4082', 'BH009' -> 'BH010', 'HD99' -> 'HD100', 'HD' -> 'HD1'
+    """
+    s = (s or "").strip()
+    if not s:
+        return "HD0001"
+    m = re.search(r"^(.*?)(\d+)$", s)
+    if m:
+        pfx, dgts = m.groups()
+        new_dgts = str(int(dgts) + 1).zfill(len(dgts))
+        return f"{pfx}{new_dgts}"
+    return f"{s}1"
+
 class VoucherRepository:
+
     def __init__(self):
         self.vp_db = settings.DB_VP
         self.sys_db = settings.DB_SYS
@@ -297,7 +320,10 @@ class VoucherRepository:
         detail_sql = f"""
             SELECT
                 d.Stt_PX, d.Stt0, d.Stt, d.Tk, d.Tk_Du, d.Tk_Du2, d.Tk_Du4,
-                d.Ma_Kho, d.Ma_Vt, d.Dvt, d.Dvt_Ban, d.So_Tam, d.He_So8,
+                d.Ma_Kho, d.Ma_Vt,
+                dbo.fn_TCVNToUnicode(d.Dvt) AS Dvt,
+                dbo.fn_TCVNToUnicode(d.Dvt_Ban) AS Dvt_Ban,
+                d.So_Tam, d.He_So8,
                 d.So_Luong8, d.He_So9, d.So_Luong9, d.Gia_Nt9, d.Gia9,
                 d.Tien_Nt9, d.Tien9, d.So_Luong, d.Gia_Nt, d.Gia, d.Tien_Nt,
                 d.Tien, d.Gia_Nt2, d.Gia2, d.Tien_Nt2, d.Tien2, d.Tien_Nt3,
@@ -422,10 +448,471 @@ class VoucherRepository:
             chiet_khau=float(dr[31] or 0.0),
             tien_nt4=float(dr[32] or 0.0),
             tien4=float(dr[33] or 0.0),
-            gia_tb_tt=(dr[34] or "K").strip(),
+            gia_tb_tt=(dr[34] or "C").strip(),
             ten_vt=(dr[35] or "").strip(),
             ten_kho=(dr[36] or "").strip(),
             loai_vt=(dr[37] or "1").strip()
         )
 
+    def get_closing_date(self, ma_dvcs: str = "S1") -> Optional[str]:
+        """
+        Query accounting closing lock date M_Ngay_Kt_Ht from VTSYS.dbo.DmDvCs.
+        """
+        sql = f"SELECT Ngay_Kt_Ht FROM {self.sys_db}.dbo.DmDvCs WITH (NOLOCK) WHERE Ma_DvCs = ?"
+        try:
+            with get_db_cursor(self.sys_db) as cur:
+                cur.execute(sql, [ma_dvcs or "S1"])
+                r = cur.fetchone()
+                if r and r[0]:
+                    return r[0].strftime("%Y-%m-%d")
+        except Exception as e:
+            logger.warning(f"Error querying DmDvCs for closing date: {e}")
+        return None
+
+    def get_next_voucher_number(
+        self,
+        ma_dvcs: str = "S1",
+        ma_ct: str = "X1",
+        ngay_ct: Optional[str] = None,
+        cur: Optional[Any] = None
+    ) -> str:
+        """
+        Finds the highest voucher number (e.g. HD1000 -> HD1001) in VP_2014.dbo.CtBH
+        and verifies uniqueness via ST_Check_Number.
+        """
+        clean_ma_ct = (ma_ct or "X1").strip().upper()
+        sql = f"""
+            SELECT TOP 200 RTRIM(So_Ct)
+            FROM {self.vp_db}.dbo.CtBH WITH (NOLOCK)
+            WHERE Ma_Ct = ? AND So_Ct LIKE 'HD[0-9]%'
+            ORDER BY Ngay_Ct DESC, Stt DESC
+        """
+        rows: List[str] = []
+        try:
+            if cur is not None:
+                cur.execute(sql, [clean_ma_ct])
+                fetched = cur.fetchall()
+                rows = [r[0] for r in fetched if r and r[0] and isinstance(r[0], str)]
+            else:
+                with get_db_cursor(self.vp_db) as c:
+                    c.execute(sql, [clean_ma_ct])
+                    fetched = c.fetchall()
+                    rows = [r[0] for r in fetched if r and r[0] and isinstance(r[0], str)]
+        except Exception as e:
+            logger.warning(f"Error querying max So_Ct: {e}")
+
+        max_num = 0
+        pad_len = 4
+        prefix = "HD"
+        for s in rows:
+            s_clean = s.strip()
+            m = re.match(r"^(HD)(\d+)$", s_clean, re.IGNORECASE)
+            if m:
+                num = int(m.group(2))
+                if num > max_num:
+                    max_num = num
+                    pad_len = len(m.group(2))
+                    prefix = m.group(1).upper()
+
+        if max_num > 0:
+            candidate = f"{prefix}{str(max_num + 1).zfill(pad_len)}"
+        else:
+            candidate = "HD0001"
+
+        if ngay_ct:
+            try:
+                _, valid_so_ct = self.check_duplicate_number(
+                    ma_dvcs=ma_dvcs or "S1",
+                    moi_sua="M",
+                    stt="",
+                    ma_ct=clean_ma_ct,
+                    ngay_ct=ngay_ct,
+                    so_ct=candidate,
+                    cur=cur
+                )
+                return valid_so_ct
+            except Exception:
+                pass
+        return candidate
+
+    def check_duplicate_number(
+        self,
+        ma_dvcs: str,
+        moi_sua: str,
+        stt: str,
+        ma_ct: str,
+        ngay_ct: str,
+        so_ct: str,
+        cur: Optional[Any] = None
+    ) -> Tuple[bool, str]:
+        """
+        Check duplicate voucher number via ST_Check_Number.
+        If duplicate, increments number (e.g. HD4081 -> HD4082) until unique.
+        """
+        curr_so_ct = (so_ct or "").strip()
+        if not curr_so_ct:
+            return False, self.get_next_voucher_number(ma_dvcs=ma_dvcs, ma_ct=ma_ct, ngay_ct=ngay_ct, cur=cur)
+
+        is_dup_initially = False
+
+        def _exec_check(c: Any, s_num: str) -> bool:
+            check_sql = f"""
+                DECLARE @p_Check bit = 0;
+                EXEC {self.vp_db}.dbo.ST_Check_Number
+                    @p_Ma_DvCs=?,
+                    @p_Moi_Sua=?,
+                    @p_Stt=?,
+                    @p_Ma_Ct=?,
+                    @p_Ngay_Ct=?,
+                    @p_So_Ct=?,
+                    @p_Check=@p_Check OUTPUT;
+                SELECT @p_Check;
+            """
+            c.execute(check_sql, [ma_dvcs or "S1", moi_sua or "M", stt or "", ma_ct or "X1", ngay_ct, s_num])
+            res = c.fetchone()
+            return bool(res[0]) if res else False
+
+        def _increment(s: str) -> str:
+            m = re.search(r"^(.*?)(\d+)$", s)
+            if m:
+                pfx, dgts = m.groups()
+                new_dgts = str(int(dgts) + 1).zfill(len(dgts))
+                return f"{pfx}{new_dgts}"
+            return f"{s}1"
+
+        for attempt in range(500):
+            if cur is not None:
+                is_dup = _exec_check(cur, curr_so_ct)
+            else:
+                with get_db_cursor(self.vp_db) as c:
+                    is_dup = _exec_check(c, curr_so_ct)
+
+            if attempt == 0:
+                is_dup_initially = is_dup
+
+            if not is_dup:
+                return is_dup_initially, curr_so_ct
+
+            curr_so_ct = _increment(curr_so_ct)
+
+        return is_dup_initially, curr_so_ct
+
+    def generate_stt(self, ma_dvcs: str = "S1", cur: Optional[Any] = None) -> str:
+        """
+        Generates a unique 20-character ERP key index via VTSYS.dbo.ST_Increase_KeyIndex.
+        Falls back to high-entropy 20-char key if offline or mock.
+        """
+        clean_dvcs = (ma_dvcs or "S1").strip().upper()[:2]
+        if cur is not None:
+            try:
+                sp_sql = f"""
+                    DECLARE @p_Stt char(20) = '';
+                    EXEC {self.sys_db}.dbo.ST_Increase_KeyIndex @p_Ma_DvCs=?, @p_Stt=@p_Stt OUTPUT;
+                    SELECT @p_Stt;
+                """
+                cur.execute(sp_sql, [clean_dvcs])
+                r = cur.fetchone()
+                if r and r[0] and r[0].strip():
+                    return r[0].strip()
+            except Exception as e:
+                logger.warning(f"Error calling ST_Increase_KeyIndex: {e}")
+
+        # Deterministic 20-character key fallback: DvCs(2) + 18 digits
+        t_ns = time.time_ns()
+        rnd = random.randint(1000, 9999)
+        tail = f"{t_ns}{rnd}"[-18:].zfill(18)
+        return f"{clean_dvcs}{tail}"
+
+    def save_voucher(
+        self,
+        data: VoucherCreateRequest,
+        mode: str = "M",
+        stt_override: Optional[str] = None,
+        user_name: str = "KTCN3"
+    ) -> VoucherSaveResponse:
+        """
+        Save sales invoice to VP_2014 with 7 Pre-Save checks & full ACID transaction.
+        Never sets COGS fields (Gia_Nt, Gia, Tien_Nt, Tien = 0, Fix #21).
+        """
+        # ===== CHỐT 1: KIỂM TRA NGÀY KHÓA SỔ =====
+        ngay_kt_ht = self.get_closing_date(data.ma_dvcs or "S1")
+        if ngay_kt_ht and data.ngay_ct <= ngay_kt_ht:
+            raise ValueError(f"Ngày chứng từ ({data.ngay_ct}) nằm trong kỳ đã khóa sổ (đến ngày {ngay_kt_ht})!")
+
+        # ===== CHỐT 2: TRƯỜNG BẮT BUỘC =====
+        if not data.ma_dt or not data.ma_dt.strip():
+            raise ValueError("Mã khách hàng (Ma_Dt) là bắt buộc!")
+        if not data.ma_nx or not data.ma_nx.strip():
+            data.ma_nx = "131"
+        if not data.items or len(data.items) == 0:
+            raise ValueError("Chứng từ phải có ít nhất 1 dòng chi tiết hàng hóa!")
+
+        # ===== CHỐT 3: KIỂM TRA HẠN MỨC CÔNG NỢ REALTIME =====
+        debt_summary = debt_repository.get_customer_debt_summary(data.ma_dt.strip())
+        if debt_summary.is_over_limit:
+            raise ValueError(
+                f"Khách hàng {data.ma_dt} vượt quá hạn mức nợ cho phép! "
+                f"(Dư nợ: {debt_summary.du_cuoi:,.0f} >= Giới hạn: {debt_summary.gioi_han:,.0f})"
+            )
+
+        # ===== CHỐT 4 & 5: CHUẨN HÓA DÒNG HÀNG & CHIẾT KHẤU = 0 & HÀNG KM (FIX #5, #17, #21) =====
+        safe_ty_gia = float(data.ty_gia) if data.ty_gia and data.ty_gia > 0 else 1.0
+        safe_ma_tte = (data.ma_tte or "VND").strip().upper()
+
+        for it in data.items:
+            loai_vt = (it.loai_vt or "1").strip()
+            so_tam = float(it.so_tam or 0.0)
+            he_so8 = float(it.he_so8 if it.he_so8 and it.he_so8 > 0 else 1.0)
+            he_so9 = float(it.he_so9 if it.he_so9 and it.he_so9 > 0 else 1.0)
+            so_luong9 = float(it.so_luong9 or 0.0)
+            gia_nt9 = float(it.gia_nt9 or 0.0)
+            chiet_khau = float(it.chiet_khau or 0.0)
+
+            # Fix #17: VND promotional item 1-10 VND
+            if safe_ma_tte == "VND" and 1 <= gia_nt9 <= 10:
+                chiet_khau = 0.0
+
+            if loai_vt == "2":
+                so_luong_ban = round_amount(so_tam * he_so8, 2)
+                it.so_luong8 = so_luong_ban
+                it.so_luong9 = so_luong_ban
+                it.so_luong = so_luong_ban
+            elif loai_vt == "1":
+                it.so_luong8 = 0.0
+                so_luong_ban = so_luong9
+                it.so_luong = round_amount(so_luong9 * he_so9, 2)
+            else:
+                it.so_luong8 = 0.0
+                so_luong_ban = so_luong9
+                it.so_luong = so_luong9
+
+            it.tien_nt9 = round_amount(so_luong_ban * gia_nt9, 2)
+            it.gia9 = float(round_vnd(gia_nt9 * safe_ty_gia))
+            it.tien9 = float(round_vnd(it.tien_nt9 * safe_ty_gia))
+
+            if chiet_khau > 0:
+                it.tien_nt4 = round_amount(it.tien_nt9 * chiet_khau / 100.0, 2)
+                it.tien4 = float(round_vnd(it.tien9 * chiet_khau / 100.0))
+                it.tien_nt2 = round_amount(it.tien_nt9 - it.tien_nt4, 2)
+                it.tien2 = float(round_vnd(it.tien9 - it.tien4))
+                it.gia_nt2 = round_amount(gia_nt9 * (100.0 - chiet_khau) / 100.0, 2)
+                it.gia2 = float(round_vnd(it.gia9 * (100.0 - chiet_khau) / 100.0))
+            else:
+                it.tien_nt4 = 0.0
+                it.tien4 = 0.0
+                it.tien_nt2 = it.tien_nt9
+                it.tien2 = it.tien9
+                it.gia_nt2 = gia_nt9
+                it.gia2 = it.gia9
+
+            it.chiet_khau = chiet_khau
+
+            # Fix #21: COGS fields must ALWAYS be 0 on sales voucher
+            it.gia_nt = 0.0
+            it.gia = 0.0
+            it.tien_nt = 0.0
+            it.tien = 0.0
+
+        # ===== CHỐT 6: ĐỒNG BỘ TỔNG HEADER & THUẾ GTGT (FIX #10) =====
+        data.ttien_nt = round_amount(sum(it.tien_nt9 for it in data.items), 2)
+        data.ttien_nt2 = round_amount(sum(it.tien_nt2 for it in data.items), 2)
+        data.ttien_nt4 = round_amount(sum(it.tien_nt4 for it in data.items), 2)
+        data.ttien = float(round_vnd(sum(it.tien9 for it in data.items)))
+        data.ttien2 = float(round_vnd(sum(it.tien2 for it in data.items)))
+        data.ttien4 = float(round_vnd(sum(it.tien4 for it in data.items)))
+
+        thue_gtgt = float(data.thue_gtgt or 0.0)
+        loai_ck = data.loai_ck if data.loai_ck in ["0", "1"] else "1"
+        if thue_gtgt > 0:
+            if loai_ck == "1":
+                data.ttien_nt3 = round_amount(data.ttien_nt2 * thue_gtgt / 100.0, 2)
+            else:
+                data.ttien_nt3 = round_amount(data.ttien_nt * thue_gtgt / 100.0, 2)
+            data.ttien3 = float(round_vnd(data.ttien_nt3 * safe_ty_gia))
+        else:
+            data.ttien_nt3 = 0.0
+            data.ttien3 = 0.0
+
+        data.ttien_nt0 = round_amount(data.ttien_nt2 + data.ttien_nt3, 2)
+        data.ttien0 = float(round_vnd(data.ttien2 + data.ttien3))
+
+        # ===== CHỐT 7: CHỐNG TRÙNG SỐ & GHI BỀN VỮNG TRONG TRANSACTION ACID =====
+        with get_db_transaction(self.vp_db) as (conn, cur):
+            is_dup, final_so_ct = self.check_duplicate_number(
+                ma_dvcs=data.ma_dvcs or "S1",
+                moi_sua=mode,
+                stt=stt_override or "",
+                ma_ct=data.ma_ct or "X1",
+                ngay_ct=data.ngay_ct,
+                so_ct=data.so_ct or "",
+                cur=cur
+            )
+            data.so_ct = final_so_ct
+
+            if mode == "M":
+                stt = self.generate_stt(data.ma_dvcs or "S1", cur)
+            else:
+                if not stt_override or not stt_override.strip():
+                    raise ValueError("Chế độ sửa yêu cầu mã chứng từ (stt) hợp lệ!")
+                stt = stt_override.strip()
+
+            # 1. Ghi Header dbo.CtBH
+            if mode == "M":
+                insert_header_sql = f"""
+                    INSERT INTO {self.vp_db}.dbo.CtBH (
+                        Stt, Ma_DvCs, Ma_Ct, Nh_Ct, Ma_Tte, Ty_Gia,
+                        Ngay_Ps, Ngay_Ct, So_Ct, Ma_Xe, Ma_Bp, Ma_HD,
+                        Ma_Dt, Ma_Nx, Tk2, Tk3, Tk_Du3, Tk4,
+                        Ong_Ba, Dia_Chi, Dien_Giai0, Desc_EN0,
+                        TTien_Nt, TTien_Nt0, TTien_Nt2, TTien_Nt3, TTien_Nt4,
+                        TTien, TTien0, TTien3, TTien2, TTien4,
+                        Loai_Ck, TyLeCK, Han_Tt, Ma_Thue, Thue_GTGT,
+                        Ma_DtGtGt, Ten_DtGtGt, So_Ct0, Ngay_Ct0, Stt_HBTL,
+                        Confirmed, Posted, Printed, UserName
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
+                        dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?),
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, dbo.fn_UnicodeToTCVN(?), ?, ?, ?,
+                        ?, ?, ?, ?
+                    )
+                """
+                cur.execute(insert_header_sql, [
+                    stt, data.ma_dvcs or "S1", data.ma_ct or "X1", data.nh_ct or "2", data.ma_tte or "VND", safe_ty_gia,
+                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or "", data.ma_bp or "", data.ma_hd or "",
+                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", data.tk3 or "33311", data.tk_du3 or "1311", data.tk4 or "521",
+                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or "",
+                    data.ttien_nt, data.ttien_nt0, data.ttien_nt2, data.ttien_nt3, data.ttien_nt4,
+                    data.ttien, data.ttien0, data.ttien3, data.ttien2, data.ttien4,
+                    data.loai_ck or "1", data.tyle_ck or 0.0, data.han_tt or 0, data.ma_thue or "", thue_gtgt,
+                    data.ma_dtgtgt or "", data.ten_dtgtgt or "", data.so_ct0 or "", data.ngay_ct0, data.stt_hbtl or "",
+                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, 1 if data.printed else 0, user_name or "KTCN3"
+                ])
+            else:
+                update_header_sql = f"""
+                    UPDATE {self.vp_db}.dbo.CtBH SET
+                        Ma_DvCs = ?, Ma_Ct = ?, Nh_Ct = ?, Ma_Tte = ?, Ty_Gia = ?,
+                        Ngay_Ps = ?, Ngay_Ct = ?, So_Ct = ?, Ma_Xe = ?, Ma_Bp = ?, Ma_HD = ?,
+                        Ma_Dt = ?, Ma_Nx = ?, Tk2 = ?, Tk3 = ?, Tk_Du3 = ?, Tk4 = ?,
+                        Ong_Ba = dbo.fn_UnicodeToTCVN(?), Dia_Chi = dbo.fn_UnicodeToTCVN(?),
+                        Dien_Giai0 = dbo.fn_UnicodeToTCVN(?), Desc_EN0 = dbo.fn_UnicodeToTCVN(?),
+                        TTien_Nt = ?, TTien_Nt0 = ?, TTien_Nt2 = ?, TTien_Nt3 = ?, TTien_Nt4 = ?,
+                        TTien = ?, TTien0 = ?, TTien3 = ?, TTien2 = ?, TTien4 = ?,
+                        Loai_Ck = ?, TyLeCK = ?, Han_Tt = ?, Ma_Thue = ?, Thue_GTGT = ?,
+                        Ma_DtGtGt = ?, Ten_DtGtGt = dbo.fn_UnicodeToTCVN(?), So_Ct0 = ?, Ngay_Ct0 = ?,
+                        Confirmed = ?, Posted = ?, Printed = ?, UserName = ?
+                    WHERE Stt = ?
+                """
+                cur.execute(update_header_sql, [
+                    data.ma_dvcs or "S1", data.ma_ct or "X1", data.nh_ct or "2", data.ma_tte or "VND", safe_ty_gia,
+                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or "", data.ma_bp or "", data.ma_hd or "",
+                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", data.tk3 or "33311", data.tk_du3 or "1311", data.tk4 or "521",
+                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or "",
+                    data.ttien_nt, data.ttien_nt0, data.ttien_nt2, data.ttien_nt3, data.ttien_nt4,
+                    data.ttien, data.ttien0, data.ttien3, data.ttien2, data.ttien4,
+                    data.loai_ck or "1", data.tyle_ck or 0.0, data.han_tt or 0, data.ma_thue or "", thue_gtgt,
+                    data.ma_dtgtgt or "", data.ten_dtgtgt or "", data.so_ct0 or "", data.ngay_ct0,
+                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, 1 if data.printed else 0, user_name or "KTCN3",
+                    stt
+                ])
+
+            # 2. Ghi Detail dbo.CtBH0 (Delete cũ nếu 'S' + Insert mới)
+            if mode == "S":
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.CtBH0 WHERE Stt = ?", [stt])
+
+            insert_detail_sql = f"""
+                INSERT INTO {self.vp_db}.dbo.CtBH0 (
+                    Stt_PX, Stt0, Stt, Tk, Tk_Du, Tk_Du2, Tk_Du4,
+                    Ma_Kho, Ma_Vt, Dvt, Dvt_Ban, So_Tam, He_So8,
+                    So_Luong8, He_So9, So_Luong9, Gia_Nt9, Gia9,
+                    Tien_Nt9, Tien9, So_Luong, Gia_Nt, Gia, Tien_Nt,
+                    Tien, Gia_Nt2, Gia2, Tien_Nt2, Tien2, Tien_Nt3,
+                    Tien3, Chiet_Khau, Tien_Nt4, Tien4, Gia_Tb_TT
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?), ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?
+                )
+            """
+            for it in data.items:
+                stt0 = self.generate_stt(data.ma_dvcs or "S1", cur)
+                cur.execute(insert_detail_sql, [
+                    it.stt_px or None, stt0, stt, it.tk or "632", it.tk_du or "1561", it.tk_du2 or "5111", it.tk_du4 or "521",
+                    it.ma_kho or "", it.ma_vt, it.dvt or "", it.dvt_ban or it.dvt or "", it.so_tam or 0.0, it.he_so8 or 1.0,
+                    it.so_luong8 or 0.0, it.he_so9 or 1.0, it.so_luong9 or 0.0, it.gia_nt9 or 0.0, it.gia9 or 0.0,
+                    it.tien_nt9 or 0.0, it.tien9 or 0.0, it.so_luong or 0.0, 0.0, 0.0, 0.0,
+                    0.0, it.gia_nt2 or 0.0, it.gia2 or 0.0, it.tien_nt2 or 0.0, it.tien2 or 0.0, it.tien_nt3 or 0.0,
+                    it.tien3 or 0.0, it.chiet_khau or 0.0, it.tien_nt4 or 0.0, it.tien4 or 0.0, "C"
+                ])
+
+            # 3. Post Ledger & Save Document Number
+            try:
+                cur.execute(f"SET NOCOUNT ON; EXEC {self.vp_db}.dbo.CtBH_Post @p_Kieu='1', @p_Stt=?, @p_UserName=?", [stt, user_name or "KTCN3"])
+            except Exception as e:
+                logger.warning(f"CtBH_Post warning: {e}")
+            try:
+                cur.execute(f"SET NOCOUNT ON; EXEC {self.vp_db}.dbo.CtBH_SoCaiVT_Save @p_Stt=?", [stt])
+            except Exception as e:
+                logger.warning(f"CtBH_SoCaiVT_Save warning: {e}")
+            try:
+                cur.execute(f"SET NOCOUNT ON; EXEC {self.sys_db}.dbo.ST_Save_Number @p_Ma_DvCs=?, @p_Ma_Ct=?, @p_So_Ct=?", [data.ma_dvcs or "S1", data.ma_ct or "X1", final_so_ct])
+            except Exception as e:
+                logger.warning(f"ST_Save_Number warning: {e}")
+
+            # 4. Integrity Assertion before COMMIT (Header ⟷ Detail sums match)
+            cur.execute(f"SELECT ISNULL(SUM(Tien_Nt2), 0), ISNULL(SUM(Tien_Nt9), 0), COUNT(1) FROM {self.vp_db}.dbo.CtBH0 WHERE Stt = ?", [stt])
+            check_row = cur.fetchone()
+            if check_row:
+                db_sum2 = float(check_row[0] or 0.0)
+                db_sum9 = float(check_row[1] or 0.0)
+                db_count = int(check_row[2] or 0)
+                if abs(db_sum2 - data.ttien_nt2) > 0.05 or abs(db_sum9 - data.ttien_nt) > 0.05:
+                    raise AssertionError(
+                        f"Lệch tổng tiền Header và Detail: DB Tien_Nt2={db_sum2} vs Header={data.ttien_nt2}, "
+                        f"DB Tien_Nt9={db_sum9} vs Header={data.ttien_nt}"
+                    )
+                if db_count != len(data.items):
+                    raise AssertionError(f"Số lượng dòng chi tiết không khớp: DB={db_count} vs Form={len(data.items)}")
+
+        return VoucherSaveResponse(stt=stt, so_ct=final_so_ct, message="Lưu chứng từ thành công.")
+
+    def delete_voucher(self, stt: str, user_name: str = "KTCN3") -> VoucherDeleteResponse:
+        """
+        Delete voucher from VP_2014 via CtBH_Delete SP with ACID transaction.
+        Checks locked period and voucher existence.
+        """
+        if not stt or not stt.strip():
+            raise ValueError("Mã chứng từ không được để trống!")
+        clean_stt = stt.strip()
+
+        with get_db_transaction(self.vp_db) as (conn, cur):
+            cur.execute(f"SELECT Confirmed, Posted, Ngay_Ct FROM {self.vp_db}.dbo.CtBH WITH (NOLOCK) WHERE Stt = ?", [clean_stt])
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"Không tìm thấy chứng từ có mã {clean_stt}.")
+
+            ngay_ct = row[2].strftime("%Y-%m-%d") if row[2] else ""
+            ngay_kt_ht = self.get_closing_date()
+            if ngay_kt_ht and ngay_ct and ngay_ct <= ngay_kt_ht:
+                raise ValueError(f"Không thể xóa chứng từ trong kỳ đã khóa sổ (đến ngày {ngay_kt_ht})!")
+
+            try:
+                cur.execute(f"SET NOCOUNT ON; EXEC {self.vp_db}.dbo.CtBH_Delete @p_Stt=?, @p_UserName=?", [clean_stt, user_name or "KTCN3"])
+            except Exception as e:
+                logger.warning(f"CtBH_Delete SP warning, executing cascaded SQL delete: {e}")
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.SoCai WHERE Stt = ?", [clean_stt])
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.SoCaiVT WHERE Stt = ?", [clean_stt])
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.CtBH0 WHERE Stt = ?", [clean_stt])
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.CtBH WHERE Stt = ?", [clean_stt])
+
+        return VoucherDeleteResponse(stt=clean_stt, message="Xóa chứng từ thành công.")
+
 voucher_repository = VoucherRepository()
+

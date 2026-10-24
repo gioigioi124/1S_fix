@@ -24,12 +24,12 @@ class LookupRepository:
         fn = self.fn_uni
         sql = f"""
             SELECT TOP ({limit})
-                Ma_Vt, {fn}(Ten_Vt) AS Ten_Vt, Dvt, Dvt_Ban, Loai_Vt,
+                Ma_Vt, {fn}(Ten_Vt) AS Ten_Vt, {fn}(Dvt) AS Dvt, {fn}(Dvt_Ban) AS Dvt_Ban, Loai_Vt,
                 Tk_Gv, Tk_Vt, Tk_Dt, Tk_Ck,
                 ISNULL(He_So0, 1) AS He_So0,
                 ISNULL(He_So1, 1) AS He_So1,
                 ISNULL(He_So2, 1) AS He_So2,
-                Dvt0, Dvt1, Dvt2
+                {fn}(Dvt0) AS Dvt0, {fn}(Dvt1) AS Dvt1, {fn}(Dvt2) AS Dvt2
             FROM {self.sys_db}.dbo.DmVt WITH (NOLOCK)
         """
         params = []
@@ -70,40 +70,48 @@ class LookupRepository:
         fn = self.fn_uni
         sql = f"""
             SELECT TOP ({limit})
-                Ma_Dt, {fn}(Ten_Dt) AS Ten_Dt,
-                {fn}(Dia_Chi) AS Dia_Chi,
-                {fn}(Doi_Tac) AS Doi_Tac,
-                Ms_Thue,
-                ISNULL(Han_Tt, 0) AS Han_Tt,
-                ISNULL(Gioi_Han, 0) AS Gioi_Han,
-                ISNULL(Toi_Han, 0) AS Toi_Han
-            FROM {self.sys_db}.dbo.DmDt WITH (NOLOCK)
+                d.Ma_Dt, {fn}(d.Ten_Dt) AS Ten_Dt,
+                {fn}(d.Dia_Chi) AS Dia_Chi,
+                {fn}(d.Doi_Tac) AS Doi_Tac,
+                d.Ms_Thue,
+                ISNULL(d.Han_Tt, 0) AS Han_Tt,
+                ISNULL(d.Gioi_Han, 0) AS Gioi_Han,
+                ISNULL(d.Toi_Han, 0) AS Toi_Han,
+                ISNULL(nh.Ma_Bp, '') AS Ma_Bp,
+                {fn}(ISNULL(bp.Ten_Bp, '')) AS Ten_Bp
+            FROM {self.sys_db}.dbo.DmDt d WITH (NOLOCK)
+            LEFT JOIN {self.sys_db}.dbo.DmNhDt nh WITH (NOLOCK) ON nh.Ma_Nh_Dt = d.Ma_Nh_Dt
+            LEFT JOIN {self.sys_db}.dbo.DmBp bp WITH (NOLOCK) ON bp.Ma_Bp = nh.Ma_Bp
         """
         params = []
         if query:
             q_like = f"%{query}%"
-            sql += f" WHERE Ma_Dt LIKE ? OR {fn}(Ten_Dt) LIKE ?"
+            sql += f" WHERE d.Ma_Dt LIKE ? OR {fn}(d.Ten_Dt) LIKE ?"
             params.extend([q_like, q_like])
-        sql += " ORDER BY Ma_Dt"
+        sql += " ORDER BY d.Ma_Dt"
 
         try:
             with get_db_cursor(self.sys_db) as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
                 for r in rows:
+                    ten_dt = (r[1] or "").strip()
                     doi_tac = (r[3] or "").strip()
+                    # Per All_fix.md #24 (Record 11 & 50):
+                    # IF EMPTY(Doi_Tac) -> Ong_Ba = Ten_Dt ELSE Ong_Ba = Doi_Tac
+                    ong_ba = doi_tac if doi_tac else ten_dt
                     results.append(KhachHangLookup(
                         ma_dt=(r[0] or "").strip(),
-                        ten_dt=(r[1] or "").strip(),
+                        ten_dt=ten_dt,
                         dia_chi=(r[2] or "").strip(),
-                        # Per All_fix.md #24: người giao dịch (Ong_Ba) lấy từ Doi_Tac
-                        ong_ba=doi_tac,
+                        ong_ba=ong_ba,
                         ms_thue=(r[4] or "").strip(),
                         han_tt=int(r[5] or 0),
                         gioi_han=float(r[6] or 0.0),
                         toi_han=float(r[7] or 0.0),
                         doi_tac=doi_tac,
-                        ma_bp="",
+                        ma_bp=(r[8] or "").strip(),
+                        ten_bp=(r[9] or "").strip(),
                         ma_xe=""
                     ))
         except Exception as e:
@@ -189,12 +197,19 @@ class LookupRepository:
             logger.warning(f"Could not query DmNx: {e}")
         return results
 
-    def get_xe(self) -> List[XeLookup]:
+    def get_xe(self, query: Optional[str] = None, limit: int = 200) -> List[XeLookup]:
         results: List[XeLookup] = []
-        sql = f"SELECT Ma_Xe, {self.fn_uni}(Ten_Xe) AS Ten_Xe FROM {self.sys_db}.dbo.DmXe WITH (NOLOCK) ORDER BY Ma_Xe"
+        fn = self.fn_uni
+        sql = f"SELECT TOP ({limit}) Ma_Xe, {fn}(Ten_Xe) AS Ten_Xe FROM {self.sys_db}.dbo.DmXe WITH (NOLOCK)"
+        params = []
+        if query:
+            q_like = f"%{query}%"
+            sql += f" WHERE Ma_Xe LIKE ? OR {fn}(Ten_Xe) LIKE ?"
+            params.extend([q_like, q_like])
+        sql += " ORDER BY Ma_Xe"
         try:
             with get_db_cursor(self.sys_db) as cur:
-                cur.execute(sql)
+                cur.execute(sql, params)
                 rows = cur.fetchall()
                 for r in rows:
                     results.append(XeLookup(

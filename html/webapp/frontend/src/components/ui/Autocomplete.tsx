@@ -15,17 +15,29 @@ interface AutocompleteProps {
   /** Hàm tải danh mục theo từ khóa (đã debounce). Trả về tối đa ~20 dòng. */
   fetcher: (query: string) => Promise<AutocompleteOption[]>;
   onSelect?: (option: AutocompleteOption) => void;
+  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
   /** Số ký tự tối thiểu để bắt đầu gọi fetcher (mặc định 0 = gọi khi focus). */
   minChars?: number;
+  /** Ẩn icon kính lúp bên phải (dùng cho ô nhỏ trong bảng chi tiết) */
+  hideIcon?: boolean;
+  /** Ref trỏ trực tiếp tới thẻ input bên trong để focus/select từ component cha */
+  inputRef?: React.Ref<HTMLInputElement>;
+  /** Tự động bôi đen toàn bộ nội dung khi focus vào ô input */
+  selectOnFocus?: boolean;
+  /** Tự động focus khi mount */
+  autoFocus?: boolean;
 }
 
 /**
- * Ô nhập có gợi ý (autocomplete) cho các trường mã danh mục (Ma_Dt, Ma_Kho, Ma_Vt...).
- * - Debounce 300ms (theo plan §8.9 P13) để không spam truy vấn.
+ * Ô nhập có gợi ý (autocomplete) cho các trường mã danh mục (Ma_Dt, Ma_Kho, Ma_Vt, Ma_Xe...).
+ * - Debounce 250ms để không spam truy vấn và không bao giờ tự ghi đè text khi người dùng đang gõ.
  * - Hỗ trợ điều hướng bằng ↑/↓/Enter/Esc.
+ * - Dropdown dùng vị trí fixed theo toạ độ ô input để không bị che khuất bởi overflow của bảng.
  */
 export const Autocomplete: React.FC<AutocompleteProps> = ({
   label,
@@ -33,21 +45,54 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   onChange,
   fetcher,
   onSelect,
+  onBlur,
+  onFocus,
+  onKeyDown,
   placeholder,
   disabled,
   className,
   minChars = 0,
+  hideIcon = false,
+  inputRef: externalInputRef,
+  selectOnFocus = false,
+  autoFocus = false,
 }) => {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<AutocompleteOption[]>([]);
   const [loading, setLoading] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  const [highlight, setHighlight] = useState(-1);
+  const [dropdownRect, setDropdownRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const internalInputRef = useRef<HTMLInputElement | null>(null);
   const reqIdRef = useRef(0);
+
+  const setInputRefs = (el: HTMLInputElement | null) => {
+    internalInputRef.current = el;
+    if (typeof externalInputRef === "function") {
+      externalInputRef(el);
+    } else if (externalInputRef && typeof externalInputRef === "object") {
+      (externalInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+    }
+  };
+
+  const updateDropdownPosition = () => {
+    if (!internalInputRef.current) return;
+    const rect = internalInputRef.current.getBoundingClientRect();
+    setDropdownRect({
+      top: rect.bottom + 2,
+      left: rect.left,
+      width: Math.max(rect.width, 320),
+    });
+  };
 
   // Debounce tải danh mục khi `value`/`open` đổi.
   useEffect(() => {
     if (!open) return;
+    updateDropdownPosition();
     const q = (value || "").trim();
     if (q.length < minChars) {
       setOptions([]);
@@ -60,18 +105,19 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
         const opts = await fetcher(q);
         if (id === reqIdRef.current) {
           setOptions(opts.slice(0, 20));
-          setHighlight(0);
+          // Mặc định highlight dòng đầu tiên khi có danh sách gợi ý nhưng KHÔNG tự điền vào input
+          setHighlight(opts.length > 0 ? 0 : -1);
         }
       } catch {
         if (id === reqIdRef.current) setOptions([]);
       } finally {
         if (id === reqIdRef.current) setLoading(false);
       }
-    }, 300);
+    }, 250);
     return () => clearTimeout(timer);
   }, [value, open, fetcher, minChars]);
 
-  // Đóng dropdown khi click ra ngoài.
+  // Đóng dropdown khi click ra ngoài
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
@@ -89,22 +135,41 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!open || options.length === 0) {
-      if (e.key === "ArrowDown") setOpen(true);
-      return;
-    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => (h + 1) % options.length);
-    } else if (e.key === "ArrowUp") {
+      if (!open) {
+        setOpen(true);
+        updateDropdownPosition();
+      } else if (options.length > 0) {
+        setHighlight((h) => (h + 1) % options.length);
+      }
+      return;
+    }
+    if (e.key === "ArrowUp" && open && options.length > 0) {
       e.preventDefault();
       setHighlight((h) => (h - 1 + options.length) % options.length);
-    } else if (e.key === "Enter") {
+      return;
+    }
+    if (e.key === "Enter") {
+      if (open && options.length > 0 && highlight >= 0 && highlight < options.length) {
+        e.preventDefault();
+        choose(options[highlight]);
+      } else {
+        setOpen(false);
+      }
+      onKeyDown?.(e);
+      return;
+    }
+    if (e.key === "Escape" && open) {
       e.preventDefault();
-      choose(options[highlight]);
-    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (e.key === "Tab") {
       setOpen(false);
     }
+    onKeyDown?.(e);
   };
 
   return (
@@ -116,32 +181,65 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
       )}
       <div className="relative">
         <input
+          ref={setInputRefs}
           type="text"
           value={value}
           disabled={disabled}
+          autoFocus={autoFocus}
           placeholder={placeholder}
           onChange={(e) => {
             onChange(e.target.value);
-            setOpen(true);
+            if (!open) {
+              setOpen(true);
+            }
+            updateDropdownPosition();
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={(e) => {
+            setOpen(true);
+            updateDropdownPosition();
+            if (selectOnFocus) {
+              const target = e.currentTarget;
+              target.select();
+              setTimeout(() => {
+                if (document.activeElement === target) {
+                  target.select();
+                }
+              }, 0);
+            }
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setTimeout(() => setOpen(false), 150);
+            onBlur?.(e);
+          }}
           onKeyDown={handleKeyDown}
           className={cn(
-            "w-full h-7 pl-2 pr-7 text-xs border rounded bg-white text-neutral-900 border-neutral-400 focus:outline-none focus:border-primary-700 focus:ring-1 focus:ring-primary-700 disabled:bg-neutral-100 disabled:text-neutral-500",
+            "w-full h-7 pl-2 text-xs border rounded bg-white text-neutral-900 border-neutral-400 focus:outline-none focus:border-primary-700 focus:ring-1 focus:ring-primary-700 disabled:bg-neutral-100 disabled:text-neutral-500",
+            hideIcon ? "pr-1.5" : "pr-6",
             className,
           )}
         />
-        <span className="absolute inset-y-0 right-2 flex items-center text-neutral-400 pointer-events-none">
-          {loading ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Search className="w-3.5 h-3.5" />
-          )}
-        </span>
+        {!hideIcon && (
+          <span className="absolute inset-y-0 right-1.5 flex items-center text-neutral-400 pointer-events-none">
+            {loading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Search className="w-3.5 h-3.5" />
+            )}
+          </span>
+        )}
       </div>
 
-      {open && options.length > 0 && (
-        <ul className="absolute z-50 mt-0.5 w-full max-h-56 overflow-y-auto bg-white border border-neutral-300 rounded shadow-lg text-xs">
+      {open && options.length > 0 && dropdownRect && (
+        <ul
+          style={{
+            position: "fixed",
+            top: dropdownRect.top,
+            left: dropdownRect.left,
+            width: dropdownRect.width,
+          }}
+          className="z-[9999] max-h-56 overflow-y-auto bg-white border border-neutral-300 rounded shadow-xl text-xs divide-y divide-neutral-100"
+        >
           {options.map((opt, i) => (
             <li
               key={`${opt.value}-${i}`}
@@ -151,17 +249,17 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
                 choose(opt);
               }}
               className={cn(
-                "px-2 py-1 cursor-pointer flex items-center justify-between gap-2",
+                "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3",
                 i === highlight
-                  ? "bg-primary-50 text-primary-800"
+                  ? "bg-primary-50 text-primary-900 font-medium"
                   : "hover:bg-neutral-50",
               )}
             >
-              <span className="font-mono font-semibold truncate">
+              <span className="font-mono font-bold text-primary-800 shrink-0">
                 {opt.label}
               </span>
               {opt.hint && (
-                <span className="text-neutral-500 truncate max-w-[60%] text-right">
+                <span className="text-neutral-600 font-sans truncate text-right flex-1">
                   {opt.hint}
                 </span>
               )}

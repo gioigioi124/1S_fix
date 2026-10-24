@@ -1,14 +1,26 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { VoucherDetail } from "../types/voucher";
 import { formatCurrency, formatQuantity } from "../lib/format";
+import { fetchVatTuOptions, fetchKhoOptions, lookupVatTu } from "../lib/lookups";
+import { Autocomplete } from "./ui/Autocomplete";
+import { Trash2 } from "lucide-react";
 
 interface DetailGridProps {
   items: VoucherDetail[];
   currency?: string;
   /** Khi true: bảng lấp đầy chiều cao khung cha (dùng trong split view của ctbhh). */
   embedded?: boolean;
-  /** 'list' (ctbhh) hoặc 'form' (ctbhd - thêm cột TK Có / ĐVT bán / CK / TT). */
+  /** 'list' (ctbhh) hoặc 'form' (ctbhd - thêm cột TK Có / CK / TT). */
   variant?: "list" | "form";
+  /** Chế độ sửa dữ liệu (Phase 2) */
+  editable?: boolean;
+  activeRowIndex?: number;
+  onSelectRow?: (index: number) => void;
+  onChangeItem?: (index: number, updatedItem: VoucherDetail, fieldName?: string) => void;
+  onDeleteItem?: (index: number) => void;
+  onAddItem?: () => void;
+  onValidationError?: (message: string | null) => void;
+  firstMaVtRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 export const DetailGrid: React.FC<DetailGridProps> = ({
@@ -16,30 +28,222 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   currency = "VND",
   embedded = false,
   variant = "list",
+  editable = false,
+  activeRowIndex = 0,
+  onSelectRow,
+  onChangeItem,
+  onDeleteItem,
+  onAddItem,
+  onValidationError,
+  firstMaVtRef,
 }) => {
-  // ===== Biến thể FORM (ctbhd): bảng chi tiết dày đặc, nhóm cột Số tấm/Hệ số/SL bán tô nền amber =====
+  const amber = "bg-amber-50 text-amber-900 border-amber-200";
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const maVtInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const pendingFocusRowRef = useRef<number | null>(null);
+
+  // Khi tạo dòng mới (từ phím Enter tại ô TT hoặc nút Thêm dòng), tự động focus ngay vào ô Mã vật tư của dòng vừa tạo
+  useEffect(() => {
+    if (pendingFocusRowRef.current !== null) {
+      const targetIdx = pendingFocusRowRef.current;
+      const el = maVtInputRefs.current[targetIdx];
+      if (el) {
+        pendingFocusRowRef.current = null;
+        setTimeout(() => {
+          el.focus();
+          el.select();
+        }, 20);
+      }
+    }
+  }, [items.length]);
+
+  // Kiểm tra dữ liệu dòng trước khi cho phép tạo dòng mới
+  const validateRow = (rowIdx: number, trEl?: HTMLTableRowElement | null): string | null => {
+    const it = items[rowIdx];
+    if (!it) return "Dòng dữ liệu không tồn tại.";
+
+    if (!it.ma_vt || !it.ma_vt.trim()) {
+      return `Dòng ${rowIdx + 1}: Vui lòng nhập Mã vật tư trước khi tạo dòng mới!`;
+    }
+    if (!it.ten_vt || !it.ten_vt.trim()) {
+      return `Dòng ${rowIdx + 1}: Mã vật tư chưa hợp lệ (thiếu Tên vật tư)!`;
+    }
+    if (!it.dvt || !it.dvt.trim()) {
+      return `Dòng ${rowIdx + 1}: Thiếu Đơn vị tính (Đvt)!`;
+    }
+    if (!(it.tk_du2 || it.tk_du || "").trim()) {
+      return `Dòng ${rowIdx + 1}: Thiếu Tài khoản Có (TK Có)!`;
+    }
+    if (!it.ma_kho || !it.ma_kho.trim()) {
+      return `Dòng ${rowIdx + 1}: Vui lòng chọn hoặc nhập Mã kho!`;
+    }
+
+    // Kiểm tra có ô input nào trong dòng bị xóa trắng không
+    if (trEl) {
+      const rowInputs = Array.from(trEl.querySelectorAll<HTMLInputElement>("input"));
+      for (const inp of rowInputs) {
+        if (inp.value.trim() === "") {
+          return `Dòng ${rowIdx + 1}: Không được để trống bất kỳ ô nào trong dòng!`;
+        }
+      }
+    }
+
+    const sl9 = Number(it.so_luong9 ?? 0);
+    const soTam = Number(it.so_tam ?? 0);
+    const heSo8 = Number(it.he_so8 ?? 0);
+    const sl8 = Number(it.so_luong8 ?? 0);
+
+    if (isNaN(sl9) || sl9 <= 0) {
+      return `Dòng ${rowIdx + 1}: Số lượng phải lớn hơn 0!`;
+    }
+    if (isNaN(soTam) || soTam <= 0 || isNaN(heSo8) || heSo8 <= 0 || isNaN(sl8) || sl8 <= 0) {
+      return `Dòng ${rowIdx + 1}: Số tấm, Hệ số và SL bán phải lớn hơn 0!`;
+    }
+
+    const giaNt9 = Number(it.gia_nt9 ?? NaN);
+    const tienNt9 = Number(it.tien_nt9 ?? NaN);
+    const chietKhau = Number(it.chiet_khau ?? NaN);
+    if (isNaN(giaNt9) || isNaN(tienNt9) || isNaN(chietKhau)) {
+      return `Dòng ${rowIdx + 1}: Đơn giá, Thành tiền hoặc CK % không hợp lệ!`;
+    }
+
+    return null;
+  };
+
+  const tryAddNewRow = (fromRowIdx: number, trEl?: HTMLTableRowElement | null) => {
+    const err = validateRow(fromRowIdx, trEl);
+    if (err) {
+      onValidationError?.(err);
+      return;
+    }
+    onValidationError?.(null);
+    pendingFocusRowRef.current = items.length;
+    onAddItem?.();
+  };
+
+  // Chỉ tra cứu đầy đủ thông tin vật tư khi người dùng CHỌN từ gợi ý hoặc RỜI Ô (onBlur)
+  // Tuyệt đối KHÔNG gọi async ghi đè ma_vt trong lúc người dùng đang gõ từng ký tự!
+  const enrichVatTuRow = async (idx: number, rawCode: string, hintTenVt?: string) => {
+    const it = items[idx];
+    if (!it) return;
+    const cleanCode = (rawCode || "").trim().toUpperCase();
+    if (!cleanCode) return;
+
+    const baseUpdated: VoucherDetail = {
+      ...it,
+      ma_vt: cleanCode,
+      ten_vt: hintTenVt ?? it.ten_vt,
+      gia_tb_tt: "C",
+    };
+    onChangeItem?.(idx, baseUpdated, "MA_VT");
+
+    const found = await lookupVatTu(cleanCode);
+    if (found) {
+      const nextLoaiVt = (found.loai_vt || baseUpdated.loai_vt || "1").trim();
+      const currentSl = baseUpdated.so_luong9 && baseUpdated.so_luong9 > 0 ? baseUpdated.so_luong9 : 1;
+      const enriched: VoucherDetail = {
+        ...baseUpdated,
+        ma_vt: found.ma_vt,
+        ten_vt: found.ten_vt || hintTenVt || baseUpdated.ten_vt || "",
+        dvt: found.dvt || baseUpdated.dvt || "",
+        dvt_ban: found.dvt_ban || found.dvt || baseUpdated.dvt_ban || "",
+        loai_vt: nextLoaiVt,
+        tk_du2: found.tk_dt || baseUpdated.tk_du2 || "5111",
+        tk_du: found.tk_vt || baseUpdated.tk_du || "1561",
+        tk: found.tk_gv || baseUpdated.tk || "632",
+        tk_du4: found.tk_ck || baseUpdated.tk_du4 || "521",
+        he_so9: found.he_so0 || 1.0,
+        so_luong9: currentSl,
+        so_tam: nextLoaiVt === "2" ? ((baseUpdated.so_tam ?? 0) > 0 ? baseUpdated.so_tam! : 1) : currentSl,
+        he_so8: nextLoaiVt === "2" ? ((baseUpdated.he_so8 ?? 0) > 0 ? baseUpdated.he_so8! : 1) : 1,
+        gia_tb_tt: "C",
+      };
+      onChangeItem?.(idx, enriched, "MA_VT_ENRICHED");
+    }
+  };
+
+  // Handle cell navigation (Enter / Shift+Tab / Ctrl+Shift+Tab / F8)
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIdx: number,
+    isTtCell: boolean = false
+  ) => {
+    if (e.key === "F8") {
+      e.preventDefault();
+      e.stopPropagation();
+      onDeleteItem?.(rowIdx);
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const current = e.currentTarget;
+
+      // Nếu đang ở ô TT ("C"): kiểm tra dòng hiện tại, hợp lệ thì tạo dòng mới và focus ngay vào Mã vật tư dòng mới
+      if (isTtCell) {
+        const tr = current.closest("tr");
+        tryAddNewRow(rowIdx, tr);
+        return;
+      }
+
+      const table = current.closest("table");
+      if (!table) return;
+      const inputs = Array.from(
+        table.querySelectorAll<HTMLInputElement>(
+          "input.grid-cell-input:not([disabled])"
+        )
+      );
+      const currIdx = inputs.indexOf(current);
+      if (currIdx >= 0 && currIdx < inputs.length - 1) {
+        inputs[currIdx + 1].focus();
+        inputs[currIdx + 1].select();
+      } else if (currIdx === inputs.length - 1) {
+        const tr = current.closest("tr");
+        tryAddNewRow(rowIdx, tr);
+      }
+    } else if (
+      (e.key === "Tab" && e.shiftKey) ||
+      (e.ctrlKey && e.shiftKey && e.key === "Tab")
+    ) {
+      const current = e.currentTarget;
+      const table = current.closest("table");
+      if (!table) return;
+      const inputs = Array.from(
+        table.querySelectorAll<HTMLInputElement>(
+          "input.grid-cell-input:not([disabled])"
+        )
+      );
+      const currIdx = inputs.indexOf(current);
+      if (currIdx > 0) {
+        e.preventDefault();
+        inputs[currIdx - 1].focus();
+        inputs[currIdx - 1].select();
+      }
+    }
+  };
+
+  // ===== Biến thể FORM (ctbhd): đã bỏ cột Đvt bán; Disable Đvt & TK Có; TT cố định là "C" =====
   if (variant === "form") {
-    const amber = "bg-tertiary-50 text-tertiary-800 border-tertiary-200";
     return (
       <div className="w-full h-full flex flex-col bg-white overflow-hidden">
         <div className="overflow-auto flex-1">
-          <table className="w-full text-left dense-table border-collapse text-[11.5px]">
+          <table
+            ref={tableRef}
+            className="w-full text-left dense-table border-collapse text-[11.5px]"
+          >
             <thead className="sticky top-0 z-10 bg-neutral-100 text-neutral-600 font-semibold text-[11px] uppercase tracking-wide select-none border-b border-neutral-300">
               <tr className="divide-x divide-neutral-200">
-                <th className="w-10 text-center" scope="col">
+                <th className="w-9 text-center" scope="col">
                   #
                 </th>
-                <th className="w-32" scope="col">
+                <th className="w-36" scope="col">
                   Mã vật tư
                 </th>
                 <th className="min-w-[200px]" scope="col">
                   Tên vật tư
                 </th>
-                <th className="w-14 text-center" scope="col">
-                  Đvt
-                </th>
                 <th className="w-16 text-center" scope="col">
-                  Đvt bán
+                  Đvt
                 </th>
                 <th className="w-24 text-right" scope="col">
                   Số lượng
@@ -47,7 +251,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                 <th className="w-16 text-center" scope="col">
                   TK Có
                 </th>
-                <th className="w-16 text-center" scope="col">
+                <th className="w-24 text-center" scope="col">
                   Kho
                 </th>
                 <th className={`w-24 text-right ${amber}`} scope="col">
@@ -65,80 +269,361 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                 <th className="w-32 text-right" scope="col">
                   Thành tiền
                 </th>
-                <th className="w-12 text-center" scope="col">
-                  CK
+                <th className="w-14 text-center" scope="col">
+                  CK %
                 </th>
-                <th className="w-12 text-center" scope="col">
+                <th className="w-10 text-center" scope="col">
                   TT
                 </th>
+                {editable && (
+                  <th className="w-10 text-center" scope="col" title="Xóa dòng (F8)">
+                    Xóa
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200 font-mono text-neutral-700">
               {items.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={15}
-                    className="px-4 py-6 text-center text-neutral-400 italic text-xs font-sans"
+                    colSpan={editable ? 15 : 14}
+                    className="px-4 py-8 text-center text-neutral-400 italic text-xs font-sans"
                   >
-                    Không có dòng mặt hàng nào
+                    Không có dòng mặt hàng nào.{" "}
+                    {editable && onAddItem && (
+                      <button
+                        type="button"
+                        onClick={onAddItem}
+                        className="text-primary-700 underline font-semibold ml-1 cursor-pointer"
+                      >
+                        Thêm dòng mới
+                      </button>
+                    )}
                   </td>
                 </tr>
               ) : (
-                items.map((it, idx) => (
-                  <tr
-                    key={it.stt0 || idx}
-                    className="hover:bg-secondary-50/40 transition-colors divide-x divide-neutral-100"
-                  >
-                    <td className="py-1 text-center font-sans text-neutral-400 font-medium">
-                      {idx + 1}
-                    </td>
-                    <td className="py-1 px-2.5 font-bold text-primary-800">
-                      {it.ma_vt}
-                    </td>
-                    <td
-                      className="py-1 px-3 font-sans font-medium text-neutral-800 truncate max-w-[320px]"
-                      title={it.ten_vt || ""}
+                items.map((it, idx) => {
+                  const isActive = editable && idx === activeRowIndex;
+
+                  if (editable) {
+                    return (
+                      <tr
+                        key={it.stt0 || idx}
+                        onClick={() => onSelectRow?.(idx)}
+                        className={`divide-x divide-neutral-200 transition-colors ${
+                          isActive
+                            ? "bg-primary-50/50 ring-1 ring-inset ring-primary-500"
+                            : "hover:bg-neutral-50"
+                        }`}
+                      >
+                        <td className="py-0.5 text-center font-sans text-neutral-400 font-medium">
+                          {idx + 1}
+                        </td>
+                        {/* Mã vật tư */}
+                        <td className="p-0.5">
+                          <Autocomplete
+                            inputRef={(el) => {
+                              maVtInputRefs.current[idx] = el;
+                              if (idx === 0 && firstMaVtRef) {
+                                (firstMaVtRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+                              }
+                            }}
+                            selectOnFocus
+                            value={it.ma_vt || ""}
+                            onChange={(val) =>
+                              onChangeItem?.(idx, { ...it, ma_vt: val }, "MA_VT")
+                            }
+                            onSelect={(opt) => enrichVatTuRow(idx, opt.value, opt.hint)}
+                            onBlur={() => {
+                              if (it.ma_vt && it.ma_vt.trim()) {
+                                enrichVatTuRow(idx, it.ma_vt);
+                              }
+                            }}
+                            onFocus={() => onSelectRow?.(idx)}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            fetcher={fetchVatTuOptions}
+                            placeholder="Mã VT..."
+                            hideIcon
+                            className="h-6 px-1.5 py-0.5 text-xs font-mono font-bold text-primary-800 uppercase bg-white border border-neutral-300 rounded focus:border-primary-500 grid-cell-input"
+                          />
+                        </td>
+                        {/* Tên vật tư (Disabled) */}
+                        <td className="p-0.5">
+                          <input
+                            type="text"
+                            value={it.ten_vt || ""}
+                            disabled
+                            readOnly
+                            tabIndex={-1}
+                            className="w-full px-1.5 py-0.5 text-xs font-sans text-neutral-700 bg-neutral-100 border border-neutral-200 rounded truncate cursor-not-allowed"
+                            title={it.ten_vt || ""}
+                          />
+                        </td>
+                        {/* Đvt (Disabled theo yêu cầu) */}
+                        <td className="p-0.5">
+                          <input
+                            type="text"
+                            value={it.dvt || ""}
+                            disabled
+                            readOnly
+                            tabIndex={-1}
+                            className="w-full px-1 py-0.5 text-xs text-center font-sans text-neutral-600 bg-neutral-100 border border-neutral-200 rounded cursor-not-allowed"
+                          />
+                        </td>
+                        {/* Số lượng (Disabled theo yêu cầu) */}
+                        <td className="p-0.5">
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.so_luong9 ?? 0}
+                            disabled
+                            readOnly
+                            tabIndex={-1}
+                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold bg-neutral-100 text-neutral-600 border border-neutral-200 rounded cursor-not-allowed"
+                          />
+                        </td>
+                        {/* TK Có (Disabled theo yêu cầu) */}
+                        <td className="p-0.5">
+                          <input
+                            type="text"
+                            value={it.tk_du2 || it.tk_du || "5111"}
+                            disabled
+                            readOnly
+                            tabIndex={-1}
+                            className="w-full px-1 py-0.5 text-xs text-center font-semibold text-primary-700 bg-neutral-100 border border-neutral-200 rounded cursor-not-allowed"
+                          />
+                        </td>
+                        {/* Kho (Autocomplete DmKho) */}
+                        <td className="p-0.5">
+                          <Autocomplete
+                            selectOnFocus
+                            value={it.ma_kho || ""}
+                            onChange={(val) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, ma_kho: val.toUpperCase() },
+                                "MA_KHO"
+                              )
+                            }
+                            onSelect={(opt) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, ma_kho: opt.value.trim().toUpperCase() },
+                                "MA_KHO"
+                              )
+                            }
+                            onFocus={() => onSelectRow?.(idx)}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            fetcher={fetchKhoOptions}
+                            placeholder="Mã kho..."
+                            hideIcon
+                            className="h-6 px-1 py-0.5 text-xs text-center font-mono font-semibold text-neutral-800 bg-white border border-neutral-300 rounded uppercase focus:border-primary-500 grid-cell-input"
+                          />
+                        </td>
+                        {/* Số tấm */}
+                        <td className={`p-0.5 ${amber}`}>
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.so_tam ?? 0}
+                            onChange={(e) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, so_tam: parseFloat(e.target.value) || 0 },
+                                "SO_TAM"
+                              )
+                            }
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            className="w-full px-1.5 py-0.5 text-xs text-right font-semibold text-amber-950 bg-amber-50/80 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input"
+                          />
+                        </td>
+                        {/* Hệ số */}
+                        <td className={`p-0.5 ${amber}`}>
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.he_so8 ?? 1}
+                            onChange={(e) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, he_so8: parseFloat(e.target.value) || 0 },
+                                "HE_SO8"
+                              )
+                            }
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            className="w-full px-1 py-0.5 text-xs text-right font-medium text-amber-950 bg-amber-50/80 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input"
+                          />
+                        </td>
+                        {/* SL bán (Disabled / ReadOnly) */}
+                        <td className={`p-0.5 ${amber}`}>
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.so_luong8 ?? 0}
+                            disabled
+                            readOnly
+                            tabIndex={-1}
+                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold text-amber-950 bg-amber-100/50 border border-amber-200 rounded cursor-not-allowed"
+                          />
+                        </td>
+                        {/* Đơn giá */}
+                        <td className="p-0.5">
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.gia_nt9 ?? 0}
+                            onChange={(e) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, gia_nt9: parseFloat(e.target.value) || 0 },
+                                "GIA_NT9"
+                              )
+                            }
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            className="w-full px-1.5 py-0.5 text-xs text-right font-medium text-neutral-800 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                          />
+                        </td>
+                        {/* Thành tiền */}
+                        <td className="p-0.5">
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.tien_nt9 ?? 0}
+                            onChange={(e) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, tien_nt9: parseFloat(e.target.value) || 0 },
+                                "TIEN_NT9"
+                              )
+                            }
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold text-neutral-900 bg-neutral-50 border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                          />
+                        </td>
+                        {/* CK % */}
+                        <td className="p-0.5">
+                          <input
+                            type="number"
+                            step="any"
+                            value={it.chiet_khau ?? 0}
+                            onChange={(e) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, chiet_khau: parseFloat(e.target.value) || 0 },
+                                "CHIET_KHAU"
+                              )
+                            }
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            className="w-full px-1 py-0.5 text-xs text-center font-medium text-neutral-700 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                          />
+                        </td>
+                        {/* TT: luôn cố định là "C", bấm Enter tại ô này sẽ kiểm tra dòng và tạo dòng mới */}
+                        <td className="p-0.5">
+                          <input
+                            type="text"
+                            value="C"
+                            readOnly
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            onKeyDown={(e) => handleCellKeyDown(e, idx, true)}
+                            title="Cố định là C — Bấm Enter để tạo dòng mới"
+                            className="w-full px-1 py-0.5 text-xs text-center font-bold text-success-700 bg-success-50/50 border border-neutral-300 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 uppercase grid-cell-input cursor-default"
+                          />
+                        </td>
+                        <td className="py-0.5 text-center">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteItem?.(idx);
+                            }}
+                            disabled={items.length <= 1}
+                            title="Xóa dòng (F8)"
+                            className="p-1 text-neutral-400 hover:text-danger-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  // Non-editable form row
+                  return (
+                    <tr
+                      key={it.stt0 || idx}
+                      className="hover:bg-secondary-50/40 transition-colors divide-x divide-neutral-100"
                     >
-                      {it.ten_vt || "—"}
-                    </td>
-                    <td className="py-1 text-center font-sans text-neutral-600">
-                      {it.dvt || "—"}
-                    </td>
-                    <td className="py-1 text-center font-sans text-neutral-600">
-                      {it.dvt_ban || it.dvt || "—"}
-                    </td>
-                    <td className="py-1 text-right font-semibold text-neutral-900">
-                      {formatQuantity(it.so_luong9)}
-                    </td>
-                    <td className="py-1 text-center text-primary-700 font-medium">
-                      {it.tk_du || "—"}
-                    </td>
-                    <td className="py-1 text-center font-medium text-neutral-600">
-                      {it.ma_kho || "—"}
-                    </td>
-                    <td className={`py-1 text-right font-medium ${amber}`}>
-                      {formatQuantity(it.so_tam)}
-                    </td>
-                    <td className={`py-1 text-right font-medium ${amber}`}>
-                      {formatQuantity(it.he_so8)}
-                    </td>
-                    <td className={`py-1 text-right font-semibold ${amber}`}>
-                      {formatQuantity(it.so_luong8)}
-                    </td>
-                    <td className="py-1 text-right text-neutral-700">
-                      {formatCurrency(it.gia_nt9, currency)}
-                    </td>
-                    <td className="py-1 text-right font-bold text-neutral-900 bg-neutral-50/60">
-                      {formatCurrency(it.tien_nt9, currency)}
-                    </td>
-                    <td className="py-1 text-center font-sans text-neutral-400">
-                      {formatQuantity(it.chiet_khau)}
-                    </td>
-                    <td className="py-1 text-center font-bold text-success-700 font-sans">
-                      C
-                    </td>
-                  </tr>
-                ))
+                      <td className="py-1 text-center font-sans text-neutral-400 font-medium">
+                        {idx + 1}
+                      </td>
+                      <td className="py-1 px-2.5 font-bold text-primary-800">
+                        {it.ma_vt}
+                      </td>
+                      <td
+                        className="py-1 px-3 font-sans font-medium text-neutral-800 truncate max-w-[320px]"
+                        title={it.ten_vt || ""}
+                      >
+                        {it.ten_vt || "—"}
+                      </td>
+                      <td className="py-1 text-center font-sans text-neutral-600">
+                        {it.dvt || "—"}
+                      </td>
+                      <td className="py-1 text-right font-semibold text-neutral-900">
+                        {formatQuantity(it.so_luong9)}
+                      </td>
+                      <td className="py-1 text-center text-primary-700 font-medium">
+                        {it.tk_du || it.tk_du2 || "—"}
+                      </td>
+                      <td className="py-1 text-center font-medium text-neutral-600">
+                        {it.ma_kho || "—"}
+                      </td>
+                      <td className={`py-1 text-right font-medium ${amber}`}>
+                        {formatQuantity(it.so_tam)}
+                      </td>
+                      <td className={`py-1 text-right font-medium ${amber}`}>
+                        {formatQuantity(it.he_so8)}
+                      </td>
+                      <td className={`py-1 text-right font-semibold ${amber}`}>
+                        {formatQuantity(it.so_luong8)}
+                      </td>
+                      <td className="py-1 text-right text-neutral-700">
+                        {formatCurrency(it.gia_nt9, currency)}
+                      </td>
+                      <td className="py-1 text-right font-bold text-neutral-900 bg-neutral-50/60">
+                        {formatCurrency(it.tien_nt9, currency)}
+                      </td>
+                      <td className="py-1 text-center font-sans text-neutral-400">
+                        {formatQuantity(it.chiet_khau)}
+                      </td>
+                      <td className="py-1 text-center font-bold text-success-700 font-sans">
+                        C
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

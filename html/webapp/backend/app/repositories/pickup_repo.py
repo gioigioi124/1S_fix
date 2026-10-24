@@ -1,8 +1,7 @@
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from app.config import settings
 from app.database import get_db_cursor
-from app.utils.unicode import tcvn_to_unicode
 from app.schemas.pickup import PickupSlipSchema, PickupItemSchema, PickupDetailResponse
 
 logger = logging.getLogger("app.repositories.pickup")
@@ -11,8 +10,7 @@ class PickupRepository:
     def __init__(self):
         self.kh_db = settings.DB_KH
         self.sys_db = settings.DB_SYS
-        # fn_TCVNToUnicode / fn_UnicodeToTCVN are defined in VP_2014.
-        # Qualified cross-database scalar calls are safe from a KH_2014 connection.
+        self.vp_db = settings.DB_VP
         self.fn_db = settings.DB_VP
         self.fn_uni = f"{self.fn_db}.dbo.fn_TCVNToUnicode"
 
@@ -23,27 +21,28 @@ class PickupRepository:
         ngay_ct2: Optional[str] = None
     ) -> List[PickupSlipSchema]:
         """
-        List pickup warehouse slips from KH_2014 that have un-invoiced items (Stt_PX IS NULL).
+        List warehouse slips from KH_2014 not yet invoiced in VP_2014.
+        Cross-checks: NOT EXISTS (SELECT 1 FROM VP_2014.dbo.CtBH0 vp WHERE vp.Stt_PX = h.Stt).
         100% READ-ONLY (SELECT only).
         """
         where_clauses = ["h.Confirmed = 1", "h.Ma_Ct IN ('X1', 'N5')"]
         params = []
 
-        if ma_dt:
+        if ma_dt and ma_dt.strip():
             where_clauses.append("h.Ma_Dt = ?")
-            params.append(ma_dt)
-        if ngay_ct1:
+            params.append(ma_dt.strip())
+        if ngay_ct1 and ngay_ct1.strip():
             where_clauses.append("h.Ngay_Ct >= ?")
-            params.append(ngay_ct1)
-        if ngay_ct2:
+            params.append(ngay_ct1.strip())
+        if ngay_ct2 and ngay_ct2.strip():
             where_clauses.append("h.Ngay_Ct <= ?")
-            params.append(ngay_ct2)
+            params.append(ngay_ct2.strip())
 
-        # Ensure only slips with at least 1 item not yet picked up
+        # Exclude slips whose header Stt is already linked as Stt_PX in VP_2014.dbo.CtBH0
         where_clauses.append(f"""
-            EXISTS (
-                SELECT 1 FROM {self.kh_db}.dbo.CtBH0 d WITH (NOLOCK)
-                WHERE d.Stt = h.Stt AND (d.Stt_PX IS NULL OR d.Stt_PX = '')
+            NOT EXISTS (
+                SELECT 1 FROM {self.vp_db}.dbo.CtBH0 vp WITH (NOLOCK)
+                WHERE vp.Stt_PX = h.Stt
             )
         """)
 
@@ -61,7 +60,7 @@ class PickupRepository:
             FROM {self.kh_db}.dbo.CtBH h WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmDt c WITH (NOLOCK) ON c.Ma_Dt = h.Ma_Dt
             JOIN {self.kh_db}.dbo.CtBH0 d WITH (NOLOCK) ON d.Stt = h.Stt
-            WHERE {where_sql} AND (d.Stt_PX IS NULL OR d.Stt_PX = '')
+            WHERE {where_sql}
             GROUP BY h.Stt, h.So_Ct, h.Ngay_Ct, h.Ma_Dt, h.Dia_Chi, h.Ma_Xe, c.Ten_Dt
             ORDER BY h.Ngay_Ct DESC, h.So_Ct DESC
         """
@@ -95,16 +94,20 @@ class PickupRepository:
         """
         sql = f"""
             SELECT
-                d.Stt0, d.Stt, d.Ma_Vt, d.Dvt, d.Dvt_Ban, d.Ma_Kho,
+                d.Stt0, d.Stt, d.Ma_Vt,
+                {self.fn_uni}(d.Dvt) AS Dvt,
+                {self.fn_uni}(d.Dvt_Ban) AS Dvt_Ban,
+                d.Ma_Kho,
                 ISNULL(d.So_Tam, 0) AS So_Tam,
                 ISNULL(d.He_So8, 1) AS He_So8,
                 ISNULL(d.So_Luong8, 0) AS So_Luong8,
                 ISNULL(d.So_Luong9, 0) AS So_Luong9,
                 {self.fn_uni}(v.Ten_Vt) AS Ten_Vt,
-                ISNULL(v.Loai_Vt, '1') AS Loai_Vt
+                ISNULL(v.Loai_Vt, '1') AS Loai_Vt,
+                v.Tk_Gv, v.Tk_Vt, v.Tk_Dt, v.Tk_Ck
             FROM {self.kh_db}.dbo.CtBH0 d WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmVt v WITH (NOLOCK) ON v.Ma_Vt = d.Ma_Vt
-            WHERE d.Stt = ? AND (d.Stt_PX IS NULL OR d.Stt_PX = '')
+            WHERE d.Stt = ?
             ORDER BY d.Stt0
         """
 
@@ -128,8 +131,75 @@ class PickupRepository:
                         ten_vt=(r[10] or "").strip(),
                         loai_vt=(r[11] or "1").strip()
                     ))
+            return PickupDetailResponse(stt=stt, items=items)
         except Exception as e:
             logger.error(f"Error querying pickup items for slip {stt}: {e}")
             return PickupDetailResponse(stt=stt, items=items)
+
+    def get_slip_header(self, stt: str) -> Optional[Dict[str, Any]]:
+        """
+        Query slip header info to inherit vehicle and partner.
+        """
+        sql = f"""
+            SELECT h.Stt, h.Ma_Xe, h.Ma_Dt, h.Ngay_Ct
+            FROM {self.kh_db}.dbo.CtBH h WITH (NOLOCK)
+            WHERE h.Stt = ?
+        """
+        try:
+            with get_db_cursor(self.kh_db) as cur:
+                cur.execute(sql, [stt])
+                r = cur.fetchone()
+                if r:
+                    return {
+                        "stt": (r[0] or "").strip(),
+                        "ma_xe": (r[1] or "").strip(),
+                        "ma_dt": (r[2] or "").strip(),
+                        "ngay_ct": r[3].strftime("%Y-%m-%d") if r[3] else ""
+                    }
+        except Exception as e:
+            logger.warning(f"Error reading slip header {stt}: {e}")
+        return None
+
+    def get_item_price(self, ma_dt: str, ma_vt: str, ngay_ct: str) -> float:
+        """
+        Look up unit selling price from VP_2014 via SO_Get_Price.
+        """
+        if not ma_dt or not ma_vt:
+            return 0.0
+        sql = """
+            DECLARE @p_Gia numeric(18,4) = 0;
+            EXEC dbo.SO_Get_Price @p_Ngay_Ct=?, @p_Ma_Dt=?, @p_Ma_Vt=?, @p_Gia=@p_Gia OUTPUT;
+            SELECT @p_Gia;
+        """
+        try:
+            with get_db_cursor(self.vp_db) as cur:
+                cur.execute(sql, [ngay_ct, ma_dt, ma_vt])
+                r = cur.fetchone()
+                if r and r[0] is not None:
+                    return float(r[0])
+        except Exception as e:
+            logger.warning(f"Error calling SO_Get_Price for {ma_vt}: {e}")
+        return 0.0
+
+    def get_item_discount(self, ma_dt: str, ma_vt: str, ngay_ct: str) -> float:
+        """
+        Look up discount % from VP_2014 via SO_Get_Discount.
+        """
+        if not ma_dt or not ma_vt:
+            return 0.0
+        sql = """
+            DECLARE @p_CK numeric(5,2) = 0;
+            EXEC dbo.SO_Get_Discount @p_Ngay_Ct=?, @p_Ma_Dt=?, @p_Ma_Vt=?, @p_CK=@p_CK OUTPUT;
+            SELECT @p_CK;
+        """
+        try:
+            with get_db_cursor(self.vp_db) as cur:
+                cur.execute(sql, [ngay_ct, ma_dt, ma_vt])
+                r = cur.fetchone()
+                if r and r[0] is not None:
+                    return float(r[0])
+        except Exception as e:
+            logger.warning(f"Error calling SO_Get_Discount for {ma_vt}: {e}")
+        return 0.0
 
 pickup_repository = PickupRepository()

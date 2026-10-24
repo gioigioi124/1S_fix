@@ -27,6 +27,7 @@ export interface KhachHangItem {
   toi_han?: number;
   doi_tac?: string;
   ma_bp?: string;
+  ten_bp?: string;
   ma_xe?: string;
 }
 

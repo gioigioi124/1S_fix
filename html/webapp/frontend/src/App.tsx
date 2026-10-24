@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useVouchers } from "./hooks/useVouchers";
 import { useHotkeys } from "./hooks/useHotkeys";
@@ -10,7 +10,8 @@ import { DebtPanel } from "./components/DebtPanel";
 import { PrintPreview } from "./components/PrintPreview";
 import { Badge } from "./components/ui/Badge";
 import { formatDate } from "./lib/format";
-import { User, ShieldCheck, Search, RefreshCw } from "lucide-react";
+import { VoucherFullDetail, VoucherDetail, VoucherHeader } from "./types/voucher";
+import { User, ShieldCheck, Search, RefreshCw, Trash2, X } from "lucide-react";
 
 export function App() {
   const {
@@ -47,9 +48,17 @@ export function App() {
   // Đánh dấu dòng (Mark) giống ctbhh — Space / Ctrl+A / Ctrl+U tác động.
   const [marked, setMarked] = useState<Set<string>>(new Set());
 
+  // Delete modal state
+  const [deleteTarget, setDeleteTarget] = useState<VoucherHeader | null>(null);
+  const [deleting, setDeleting] = useState<boolean>(false);
+
+  // Inherited data for new voucher (F2 / Ctrl+F2 / Pickup)
+  const [inheritedData, setInheritedData] = useState<Partial<VoucherFullDetail> | null>(null);
+  const [pickupPayload, setPickupPayload] = useState<{ items: VoucherDetail[]; ma_xe?: string } | null>(null);
+
   const showToast = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => setNotification(null), 3500);
   };
 
   const toggleMark = (stt: string | null) => {
@@ -62,38 +71,147 @@ export function App() {
     });
   };
 
-  // ==== Đồng bộ URL route (/sales-invoices/:stt) ↔ chứng từ đang mở ====
+  // ==== Đồng bộ URL route (/sales-invoices, /sales-invoices/new, /sales-invoices/:stt) ====
   const { stt: sttParam } = useParams();
   const navigate = useNavigate();
+
+  const isNew = sttParam === "new";
+  const isEditing = Boolean(sttParam && !isNew);
+
   const navToDetail = (stt: string) =>
     navigate(`/sales-invoices/${encodeURIComponent(stt)}`);
+  const navToNew = () => navigate("/sales-invoices/new");
   const navToList = () => navigate("/sales-invoices");
 
   useEffect(() => {
-    if (sttParam) {
-      if (activeVoucher?.stt !== sttParam) handleOpenDetail(sttParam);
-    } else if (activeVoucher) {
+    if (sttParam && !isNew) {
+      if (activeVoucher?.stt !== sttParam) {
+        handleOpenDetail(sttParam);
+      }
+    } else if (!sttParam && activeVoucher) {
       handleCloseDetail();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sttParam]);
 
+  // Selected voucher header
+  const currentSelectedVoucher =
+    vouchers.find((v) => v.stt === selectedStt) || (vouchers.length > 0 ? vouchers[0] : null);
+
+  const [pickupParams, setPickupParams] = useState<{ maDt?: string; ngayCt?: string }>({});
+
+  const handleOpenPickup = (maDt?: string, ngayCt?: string) => {
+    setPickupParams({
+      maDt: maDt || activeVoucher?.ma_dt || currentSelectedVoucher?.ma_dt || "",
+      ngayCt: ngayCt || activeVoucher?.ngay_ct || currentSelectedVoucher?.ngay_ct || undefined,
+    });
+    setIsPickupOpen(true);
+  };
+
+  // Handler for F2 (New Voucher)
+  const handleActionNew = () => {
+    if (currentSelectedVoucher) {
+      setInheritedData({
+        ma_dt: currentSelectedVoucher.ma_dt,
+        ten_dt: currentSelectedVoucher.ten_dt,
+        dia_chi: currentSelectedVoucher.dia_chi,
+        ong_ba: currentSelectedVoucher.ong_ba,
+        ma_xe: currentSelectedVoucher.ma_xe,
+        ten_xe: currentSelectedVoucher.ten_xe,
+        ma_bp: currentSelectedVoucher.ma_bp,
+        ten_bp: currentSelectedVoucher.ten_bp,
+        ma_ct: currentSelectedVoucher.ma_ct || "X1",
+      });
+    } else {
+      setInheritedData(null);
+    }
+    navToNew();
+  };
+
+  // Handler for Ctrl+F2 (Copy Voucher)
+  const handleActionCopy = () => {
+    if (activeVoucher) {
+      setInheritedData({
+        ...activeVoucher,
+        stt: undefined,
+        so_ct: undefined,
+        items: activeVoucher.items.map((it) => ({ ...it, stt: undefined, stt0: undefined })),
+      });
+      navToNew();
+      showToast(`Đã sao chép nội dung chứng từ số ${activeVoucher.so_ct || activeVoucher.stt}.`);
+    } else if (currentSelectedVoucher) {
+      setInheritedData({
+        ...currentSelectedVoucher,
+        stt: undefined,
+        so_ct: undefined,
+        items: listDetail.map((it) => ({ ...it, stt: undefined, stt0: undefined })),
+      });
+      navToNew();
+      showToast(`Đã sao chép nội dung chứng từ số ${currentSelectedVoucher.so_ct || currentSelectedVoucher.stt}.`);
+    } else {
+      showToast("Chưa chọn chứng từ để sao chép.");
+    }
+  };
+
+  // Handler for F3 (Edit Voucher)
+  const handleActionEdit = () => {
+    if (selectedStt) {
+      navToDetail(selectedStt);
+    } else {
+      showToast("Chưa chọn chứng từ để sửa.");
+    }
+  };
+
+  // Handler for F8 (Delete Voucher)
+  const handleActionDelete = () => {
+    if (currentSelectedVoucher) {
+      setDeleteTarget(currentSelectedVoucher);
+    } else {
+      showToast("Chưa chọn chứng từ để xóa.");
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/vouchers/${encodeURIComponent(deleteTarget.stt)}?user_name=KTCN3`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showToast(`Lỗi khi xóa: ${data?.detail?.message || data?.message || "Không thể xóa chứng từ."}`);
+        return;
+      }
+      showToast(`Đã xóa thành công chứng từ số ${deleteTarget.so_ct || deleteTarget.stt}.`);
+      setDeleteTarget(null);
+      refresh();
+      if (sttParam) {
+        navToList();
+      }
+    } catch (err: any) {
+      showToast(`Lỗi kết nối: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // VFP Keyboard Shortcuts Handler (khớp ctbhh / ctbhd / ctbhch)
   useHotkeys({
-    // F2 = Thêm mới (ctbhh Command1) — khóa ở GĐ1
-    onF2: () =>
-      showToast("F2 - Thêm mới bị khóa trong Giai đoạn 1 (100% Read-Only)."),
-    onCtrlF2: () =>
-      showToast("Ctrl+F2 - Thêm mới (SaveAs) bị khóa trong Giai đoạn 1."),
-    // F3 = Sửa (ctbhh Command2) — khóa ở GĐ1
-    onF3: () =>
-      showToast(
-        "F3 - Sửa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
-      ),
-    onCtrlF3: () =>
-      showToast("Ctrl+F3 - Sửa mẫu in bị khóa trong Giai đoạn 1."),
-    // F6 = Nhập số IMEI — khóa ở GĐ1
-    onF6: () => showToast("F6 - Nhập số IMEI bị khóa trong Giai đoạn 1."),
+    // F2 = Thêm mới (ctbhh Command1)
+    onF2: () => {
+      if (!sttParam) handleActionNew();
+    },
+    // Ctrl+F2 = Sao chép tạo mới
+    onCtrlF2: () => {
+      if (!sttParam) handleActionCopy();
+    },
+    // F3 = Sửa (ctbhh Command2)
+    onF3: () => {
+      if (!sttParam) handleActionEdit();
+    },
+    onCtrlF3: () => showToast("Ctrl+F3 - Sửa mẫu in."),
+    onF6: () => showToast("F6 - Nhập số IMEI."),
     // F7 = In chứng từ (ctbhh Command5)
     onF7: () => {
       if (activeVoucher) handleOpenPrint(activeVoucher.stt);
@@ -106,17 +224,15 @@ export function App() {
       else if (selectedStt) handleOpenPrint(selectedStt);
       else showToast("Chưa chọn chứng từ để xem trước.");
     },
-    // F8 = Xóa (ctbhh Command3) — khóa ở GĐ1
-    onF8: () =>
-      showToast(
-        "F8 - Xóa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
-      ),
+    // F8 = Xóa (ctbhh Command3)
+    onF8: () => {
+      if (!sttParam) handleActionDelete();
+    },
     // F9 = Lọc chứng từ (ctbhh Command6)
     onF9: () => setIsFilterOpen(true),
-    // F4 = Chọn tài khoản — chỉ có nghĩa trong form nhập liệu (ctbhd), GĐ1 khóa
+    // F4 = Chọn tài khoản
     onF4: () => {
-      if (activeVoucher)
-        showToast("F4 - Chọn tài khoản bị khóa trong Giai đoạn 1.");
+      if (activeVoucher || isNew) showToast("F4 - Đang chọn tài khoản ngầm định.");
     },
     // Space = đánh dấu / bỏ đánh dấu dòng (ctbhh KeyPress 32)
     onSpace: () => toggleMark(selectedStt),
@@ -130,17 +246,17 @@ export function App() {
       setMarked(new Set());
       showToast("Đã bỏ chọn tất cả chứng từ.");
     },
-    // Ctrl+F = Đánh số chứng từ (Danh_So_Ct) — GĐ1 chỉ thông báo
-    onCtrlF: () =>
-      showToast("Ctrl+F - Đánh số chứng từ (Danh_So_Ct) — Giai đoạn 2."),
+    onCtrlF: () => showToast("Ctrl+F - Đánh số chứng từ tự động."),
     // Enter = mở chi tiết dòng đang chọn (tương đương double-click)
     onEnter: () => {
-      if (!activeVoucher && selectedStt) {
+      if (!sttParam && selectedStt) {
         navToDetail(selectedStt);
       }
     },
     onEscape: () => {
-      if (isPrintOpen) {
+      if (deleteTarget) {
+        setDeleteTarget(null);
+      } else if (isPrintOpen) {
         setIsPrintOpen(false);
       } else if (isDebtOpen) {
         setIsDebtOpen(false);
@@ -148,7 +264,7 @@ export function App() {
         setIsPickupOpen(false);
       } else if (isFilterOpen) {
         setIsFilterOpen(false);
-      } else if (activeVoucher) {
+      } else if (sttParam) {
         navToList();
       }
     },
@@ -156,28 +272,23 @@ export function App() {
       if (vouchers.length > 0) setSelectedStt(vouchers[0].stt);
     },
     onCtrlEnd: () => {
-      if (vouchers.length > 0)
-        setSelectedStt(vouchers[vouchers.length - 1].stt);
+      if (vouchers.length > 0) setSelectedStt(vouchers[vouchers.length - 1].stt);
     },
   });
 
   const handleHotkeyBarAction = (actionId: string) => {
     switch (actionId) {
       case "NEW":
-        showToast("F2 - Thêm mới bị khóa trong Giai đoạn 1 (100% Read-Only).");
+        handleActionNew();
         break;
       case "EDIT":
-        showToast(
-          "F3 - Sửa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
-        );
+        handleActionEdit();
         break;
       case "IMEI":
-        showToast("F6 - Nhập số IMEI bị khóa trong Giai đoạn 1.");
+        showToast("F6 - Nhập số IMEI.");
         break;
       case "DELETE":
-        showToast(
-          "F8 - Xóa chứng từ bị khóa trong Giai đoạn 1 (100% Read-Only).",
-        );
+        handleActionDelete();
         break;
       case "FILTER":
         setIsFilterOpen(true);
@@ -198,11 +309,12 @@ export function App() {
         setMarked(new Set());
         break;
       case "ESCAPE":
-        if (isPrintOpen) setIsPrintOpen(false);
+        if (deleteTarget) setDeleteTarget(null);
+        else if (isPrintOpen) setIsPrintOpen(false);
         else if (isDebtOpen) setIsDebtOpen(false);
         else if (isPickupOpen) setIsPickupOpen(false);
         else if (isFilterOpen) setIsFilterOpen(false);
-        else if (activeVoucher) navToList();
+        else if (sttParam) navToList();
         break;
       default:
         break;
@@ -213,14 +325,68 @@ export function App() {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-surface">
       {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-4 right-4 z-50 bg-neutral-900 text-white px-4 py-2 rounded shadow-lg text-xs flex items-center gap-2 border border-neutral-700">
+        <div className="fixed top-4 right-4 z-50 bg-neutral-900 text-white px-4 py-2 rounded shadow-lg text-xs flex items-center gap-2 border border-neutral-700 animate-in fade-in slide-in-from-top-2">
           <ShieldCheck className="w-4 h-4 text-tertiary-300" />
           <span>{notification}</span>
         </div>
       )}
 
-      {/* ===== Top Global Header (ẩn khi đang mở form Sửa chứng từ) ===== */}
-      {!activeVoucher && (
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded shadow-2xl border border-neutral-300 w-[440px] overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="bg-danger-700 text-white px-4 py-2.5 flex items-center justify-between shadow">
+              <div className="flex items-center gap-2">
+                <Trash2 className="w-4 h-4" />
+                <span className="font-bold text-sm">Xác nhận xóa chứng từ</span>
+              </div>
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="text-white/80 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 text-xs text-neutral-800 space-y-2.5">
+              <p className="text-sm">
+                Bạn có chắc chắn muốn xóa chứng từ số:{" "}
+                <b className="font-mono text-primary-800 text-base">
+                  {deleteTarget.so_ct || deleteTarget.stt}
+                </b>
+                ?
+              </p>
+              <div className="bg-neutral-50 p-2.5 rounded border border-neutral-200 text-neutral-600 space-y-1">
+                <div>
+                  Khách hàng: <b>{deleteTarget.ten_dt || deleteTarget.ma_dt}</b>
+                </div>
+                <div>Ngày lập: <b>{formatDate(deleteTarget.ngay_ct)}</b></div>
+              </div>
+              <p className="text-danger-700 font-medium text-[11px]">
+                Lưu ý: Thao tác sẽ gọi thủ tục CtBH_Delete để hoàn nhập kho và xóa bút toán sổ cái trên CSDL VP_2014.
+              </p>
+            </div>
+            <div className="bg-neutral-100 px-4 py-2 flex justify-end gap-2 border-t border-neutral-200">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="px-3 py-1 bg-white border border-neutral-300 hover:bg-neutral-50 rounded text-neutral-700 font-medium text-xs cursor-pointer"
+              >
+                Hủy bỏ (Esc)
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="px-3.5 py-1 bg-danger-600 hover:bg-danger-700 text-white font-semibold rounded text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {deleting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                Xóa chứng từ (F8)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Top Global Header (ẩn khi đang mở form Thêm mới / Sửa chứng từ) ===== */}
+      {!sttParam && (
         <header className="bg-neutral-900 text-neutral-200 border-b border-neutral-700 flex-shrink-0 z-30">
           <div className="px-3.5 py-1.5 flex items-center justify-between gap-4">
             {/* Logo, Breadcrumb & Tiêu đề màn hình */}
@@ -233,8 +399,8 @@ export function App() {
                 <h1 className="text-sm font-semibold text-white tracking-wide">
                   Phiếu Xuất Bán
                 </h1>
-                <Badge variant="warning" className="ml-1 font-mono text-[10px]">
-                  GĐ1: READ-ONLY
+                <Badge variant="success" className="ml-1 font-mono text-[10px]">
+                  GĐ2: PERSISTENCE (ACID)
                 </Badge>
               </div>
             </div>
@@ -274,7 +440,7 @@ export function App() {
               <button
                 onClick={() => refresh()}
                 disabled={loading}
-                className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white transition flex items-center justify-center"
+                className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-300 hover:text-white transition flex items-center justify-center cursor-pointer"
                 title="Làm mới dữ liệu từ SQL (F5)"
               >
                 <RefreshCw
@@ -286,9 +452,9 @@ export function App() {
               <div className="flex items-center gap-1.5 bg-neutral-800 px-2.5 py-1 rounded border border-neutral-700">
                 <User className="w-3.5 h-3.5 text-primary-300" />
                 <span className="font-semibold text-neutral-200 text-xs">
-                  KETOAN01
+                  KTCN3
                 </span>
-                <span className="text-neutral-400 text-[10px]">(ĐVCS: 01)</span>
+                <span className="text-neutral-400 text-[10px]">(ĐVCS: S1)</span>
               </div>
             </div>
           </div>
@@ -297,13 +463,24 @@ export function App() {
 
       {/* Main View Area */}
       <main className="flex-1 overflow-hidden relative min-h-0">
-        {activeVoucher ? (
+        {sttParam ? (
           <VoucherForm
-            voucher={activeVoucher}
+            mode={isNew ? "M" : "S"}
+            voucher={isNew ? null : activeVoucher}
+            initialInherited={inheritedData || undefined}
+            pickupPayload={pickupPayload}
+            onClearPickupPayload={() => setPickupPayload(null)}
             onBack={navToList}
-            onPrint={() => handleOpenPrint(activeVoucher.stt)}
-            onViewDebt={(maDt) => handleOpenDebt(maDt)}
-            onOpenPickup={() => setIsPickupOpen(true)}
+            onPrint={() => {
+              if (activeVoucher) handleOpenPrint(activeVoucher.stt);
+            }}
+            onViewDebt={(dt) => handleOpenDebt(dt)}
+            onOpenPickup={handleOpenPickup}
+            onSaveSuccess={(newStt) => {
+              setSelectedStt(newStt);
+              refresh();
+              navToList();
+            }}
           />
         ) : (
           <VoucherList
@@ -321,7 +498,7 @@ export function App() {
             onOpenDetail={navToDetail}
             onOpenFilter={() => setIsFilterOpen(true)}
             onOpenPrint={handleOpenPrint}
-            onOpenPickup={() => setIsPickupOpen(true)}
+            onOpenPickup={() => handleOpenPickup()}
             onOpenDebt={handleOpenDebt}
             onRefresh={refresh}
             onChangePage={handleChangePage}
@@ -329,8 +506,8 @@ export function App() {
         )}
       </main>
 
-      {/* ===== Bottom Shortcut Action Toolbar (ẩn khi đang mở form Sửa chứng từ) ===== */}
-      {!activeVoucher && (
+      {/* ===== Bottom Shortcut Action Toolbar (ẩn khi đang mở form Thêm mới / Sửa) ===== */}
+      {!sttParam && (
         <footer className="bg-neutral-900 text-neutral-200 border-t border-neutral-800 px-3 py-1 flex-shrink-0 z-20 text-[11px]">
           <div className="flex items-center justify-between flex-wrap gap-y-1 gap-x-2">
             {/* Tùy chọn in */}
@@ -345,10 +522,7 @@ export function App() {
                   value="1"
                 />
                 <span>
-                  <span className="font-mono font-bold text-primary-300">
-                    1
-                  </span>{" "}
-                  - In giá bán
+                  <span className="font-mono font-bold text-primary-300">1</span> - In giá bán
                 </span>
               </label>
               <label className="inline-flex items-center gap-1 cursor-pointer text-neutral-300 hover:text-white">
@@ -359,8 +533,7 @@ export function App() {
                   value="0"
                 />
                 <span>
-                  <span className="font-mono text-neutral-400">0</span> - Không
-                  in giá
+                  <span className="font-mono text-neutral-400">0</span> - Không in giá
                 </span>
               </label>
             </div>
@@ -369,28 +542,31 @@ export function App() {
             <div className="flex items-center flex-wrap gap-1 text-[11px]">
               <button
                 onClick={() => handleHotkeyBarAction("NEW")}
-                className="px-2 py-0.5 bg-neutral-800 hover:bg-primary-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium"
+                className="px-2 py-0.5 bg-neutral-800 hover:bg-primary-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium cursor-pointer"
+                title="Thêm mới chứng từ (F2)"
               >
                 <kbd className="text-[9px] py-0 px-1">F2</kbd>
                 <span>Thêm</span>
               </button>
               <button
                 onClick={() => handleHotkeyBarAction("EDIT")}
-                className="px-2 py-0.5 bg-neutral-800 hover:bg-primary-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium"
+                className="px-2 py-0.5 bg-neutral-800 hover:bg-primary-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium cursor-pointer"
+                title="Sửa chứng từ đang chọn (F3)"
               >
                 <kbd className="text-[9px] py-0 px-1">F3</kbd>
                 <span>Sửa</span>
               </button>
               <button
                 onClick={() => handleHotkeyBarAction("DELETE")}
-                className="px-2 py-0.5 bg-neutral-800 hover:bg-danger-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium"
+                className="px-2 py-0.5 bg-neutral-800 hover:bg-danger-700 text-neutral-100 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium cursor-pointer"
+                title="Xóa chứng từ đang chọn (F8)"
               >
                 <kbd className="text-[9px] py-0 px-1">F8</kbd>
                 <span>Xóa</span>
               </button>
               <button
                 onClick={() => handleHotkeyBarAction("PRINT")}
-                className="px-2 py-0.5 bg-primary-700 hover:bg-primary-800 text-white rounded border border-primary-600 transition flex items-center gap-1 font-medium"
+                className="px-2 py-0.5 bg-primary-700 hover:bg-primary-800 text-white rounded border border-primary-600 transition flex items-center gap-1 font-medium cursor-pointer"
               >
                 <kbd className="bg-primary-800 text-white border-primary-600 text-[9px] py-0 px-1">
                   F7
@@ -399,14 +575,14 @@ export function App() {
               </button>
               <button
                 onClick={() => handleHotkeyBarAction("PREVIEW")}
-                className="px-1.5 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 transition flex items-center gap-1"
+                className="px-1.5 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 transition flex items-center gap-1 cursor-pointer"
               >
                 <kbd className="text-[9px] py-0 px-1">Ctrl+F7</kbd>
                 <span>Xem phiếu</span>
               </button>
               <button
                 onClick={() => handleHotkeyBarAction("FILTER")}
-                className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 transition flex items-center gap-1"
+                className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded border border-neutral-700 transition flex items-center gap-1 cursor-pointer"
               >
                 <kbd className="text-[9px] py-0 px-1">F9</kbd>
                 <span>Lọc dữ liệu</span>
@@ -417,7 +593,7 @@ export function App() {
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => handleHotkeyBarAction("ESCAPE")}
-                className="px-2.5 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium"
+                className="px-2.5 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded border border-neutral-700 transition flex items-center gap-1 font-medium cursor-pointer"
               >
                 <kbd className="text-[9px] py-0 px-1">Esc</kbd>
                 <span>Quay ra</span>
@@ -438,21 +614,15 @@ export function App() {
       <PickupDialog
         isOpen={isPickupOpen}
         onClose={() => setIsPickupOpen(false)}
-        onAccept={async (slips) => {
-          try {
-            const res = await fetch("/api/pickup/accept", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ stts: slips.map((s) => s.stt) }),
-            });
-            const data = await res.json();
-            const n = data?.data?.total_rows ?? 0;
-            showToast(
-              `Đã chọn ${slips.length} phiếu xuất → ${n} dòng hàng (Giai đoạn 1: chỉ xem, không ghi).`,
-            );
-          } catch {
-            showToast("Lỗi khi lấy dữ liệu phiếu xuất từ kho.");
+        maDt={pickupParams.maDt || activeVoucher?.ma_dt || currentSelectedVoucher?.ma_dt || ""}
+        ngayCt={pickupParams.ngayCt || activeVoucher?.ngay_ct || currentSelectedVoucher?.ngay_ct || undefined}
+        onAccept={(_slips, items, maXe) => {
+          setPickupPayload({ items, ma_xe: maXe });
+          if (!sttParam) {
+            // If currently on list view, open new voucher form with pickup items
+            navToNew();
           }
+          showToast(`Đã lấy ${items.length} dòng hàng từ kho.`);
         }}
       />
 

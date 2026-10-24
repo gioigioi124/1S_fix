@@ -154,13 +154,14 @@ export function useHotkeys(
           return;
       }
 
-      // 8. Enter / Space — chỉ khi không ở ô nhập text
-      if (key === "Enter" && !inText) {
+      // 8. Enter / Space — chỉ khi không ở ô nhập text hoặc button
+      const inButton = activeEl instanceof HTMLButtonElement;
+      if (key === "Enter" && !inText && !inButton) {
         e.preventDefault();
         h.onEnter?.();
         return;
       }
-      if (key === " " && !inText) {
+      if (key === " " && !inText && !inButton) {
         e.preventDefault();
         h.onSpace?.();
         return;

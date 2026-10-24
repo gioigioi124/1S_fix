@@ -40,8 +40,8 @@ def get_nhap_xuat():
     return {"success": True, "data": [item.model_dump() for item in items]}
 
 @router.get("/xe", response_model=dict)
-def get_xe():
-    items = lookup_repository.get_xe()
+def get_xe(q: Optional[str] = Query(None, description="Mã xe hoặc biển số")):
+    items = lookup_repository.get_xe(query=q)
     return {"success": True, "data": [item.model_dump() for item in items]}
 
 @router.get("/bo-phan", response_model=dict)

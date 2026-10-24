@@ -1,7 +1,7 @@
 import logging
 import pyodbc
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Generator, Optional, Tuple
 from app.config import settings
 
 logger = logging.getLogger("app.database")
@@ -23,26 +23,58 @@ def get_connection_string(db_name: Optional[str] = None) -> str:
         f"Connection Timeout=5;"
     )
 
-def create_connection(db_name: Optional[str] = None) -> pyodbc.Connection:
+def create_connection(db_name: Optional[str] = None, autocommit: bool = True) -> pyodbc.Connection:
     conn_str = get_connection_string(db_name)
     try:
-        conn = pyodbc.connect(conn_str, autocommit=True)
+        conn = pyodbc.connect(conn_str, autocommit=autocommit)
         return conn
     except Exception as e:
         logger.error(f"Error connecting to database {db_name or settings.DB_VP}: {e}")
         raise
 
 @contextmanager
-def get_db_cursor(db_name: Optional[str] = None) -> Generator[pyodbc.Cursor, None, None]:
+def get_db_transaction(db_name: Optional[str] = None) -> Generator[Tuple[pyodbc.Connection, pyodbc.Cursor], None, None]:
     """
-    Context manager yielding a database cursor.
-    Strictly read-only in Phase 1.
+    Context manager for ACID transactions with autocommit=False.
+    Commits on successful completion, automatically rolls back on any exception.
     """
     conn = None
     cursor = None
     try:
-        conn = create_connection(db_name)
+        conn = create_connection(db_name, autocommit=False)
         cursor = conn.cursor()
+        yield conn, cursor
+        conn.commit()
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+@contextmanager
+def get_db_cursor(db_name: Optional[str] = None) -> Generator[pyodbc.Cursor, None, None]:
+    """
+    Context manager yielding a database cursor (read-only autocommit=True).
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = create_connection(db_name, autocommit=True)
+        cursor = conn.cursor()
+
         yield cursor
     finally:
         if cursor:

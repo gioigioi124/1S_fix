@@ -68,23 +68,60 @@ class DebtRepository:
         except Exception as e:
             logger.warning(f"Error querying DmDt for debt limit: {e}")
 
+        # Try calling standard SP GL_Alert_ClosingAccount4Customer (realtime balance at current date)
+        sp_success = False
         try:
             with get_db_cursor(self.vp_db) as cur:
-                cur.execute(debit_sql, [tk_param, ma_dt])
-                r = cur.fetchone()
-                if r:
-                    ps_no = float(r[0] or 0.0)
-                    ps_no_nt = float(r[1] or 0.0)
-
-                cur.execute(credit_sql, [tk_param, ma_dt])
-                r = cur.fetchone()
-                if r:
-                    ps_co = float(r[0] or 0.0)
-                    ps_co_nt = float(r[1] or 0.0)
+                import datetime
+                today_str = datetime.date.today().strftime("%Y-%m-%d")
+                sp_sql = f"""
+                    DECLARE @p_Ten_Tk nvarchar(64), @p_Ten_Tk_E nvarchar(64), @p_Ten_Dt nvarchar(64), @p_Du_No numeric(18,2), @p_Du_Co numeric(18,2);
+                    EXEC {self.vp_db}.dbo.GL_Alert_ClosingAccount4Customer
+                        @p_Ma_Dvcs='S1',
+                        @p_Stt='',
+                        @p_Ngay_Ct=?,
+                        @p_Tk=?,
+                        @p_Ten_Tk=@p_Ten_Tk OUTPUT,
+                        @p_Ten_Tk_E=@p_Ten_Tk_E OUTPUT,
+                        @p_Ma_Dt=?,
+                        @p_Ten_Dt=@p_Ten_Dt OUTPUT,
+                        @p_Du_No=@p_Du_No OUTPUT,
+                        @p_Du_Co=@p_Du_Co OUTPUT;
+                    SELECT @p_Du_No, @p_Du_Co, @p_Ten_Dt;
+                """
+                cur.execute(sp_sql, [today_str, tk or "131", ma_dt])
+                row = cur.fetchone()
+                if row:
+                    du_no = float(row[0] or 0.0)
+                    du_co = float(row[1] or 0.0)
+                    du_cuoi = du_no - du_co
+                    ps_no = du_no
+                    ps_co = du_co
+                    if row[2] and not ten_dt:
+                        ten_dt = (row[2] or "").strip()
+                    sp_success = True
         except Exception as e:
-            logger.warning(f"Error querying SoCai for balance: {e}")
+            logger.warning(f"Error calling GL_Alert_ClosingAccount4Customer: {e}")
 
-        du_cuoi = ps_no - ps_co
+        if not sp_success:
+            try:
+                with get_db_cursor(self.vp_db) as cur:
+                    cur.execute(debit_sql, [tk_param, ma_dt])
+                    r = cur.fetchone()
+                    if r:
+                        ps_no = float(r[0] or 0.0)
+                        ps_no_nt = float(r[1] or 0.0)
+
+                    cur.execute(credit_sql, [tk_param, ma_dt])
+                    r = cur.fetchone()
+                    if r:
+                        ps_co = float(r[0] or 0.0)
+                        ps_co_nt = float(r[1] or 0.0)
+                du_cuoi = ps_no - ps_co
+            except Exception as e:
+                logger.warning(f"Error querying SoCai for balance: {e}")
+                du_cuoi = 0.0
+
         du_cuoi_nt = ps_no_nt - ps_co_nt
 
         is_over_limit = (gioi_han > 0 and du_cuoi >= gioi_han)

@@ -45,9 +45,17 @@ def accept_pickup_slips(req: PickupAcceptRequest):
     """
     Nhận các phiếu xuất kho đã chọn và trả về danh sách dòng hàng đã ánh xạ
     sang K_CtTemp (chi tiết chứng từ). 100% READ-ONLY — KHÔNG ghi CSDL.
+    Tự động tra cứu giá bán, chiết khấu và tính toán theo Loại vật tư.
     """
-    result = pickup_service.accept_pickup(stts=req.stts)
+    result = pickup_service.accept_pickup(
+        stts=req.stts,
+        ma_dt=req.ma_dt,
+        ngay_ct=req.ngay_ct,
+        ty_gia=req.ty_gia,
+        ma_tte=req.ma_tte
+    )
     return {
         "success": True,
         "data": result.model_dump()
     }
+

@@ -39,7 +39,7 @@ class VoucherDetailSchema(BaseModel):
     chiet_khau: Optional[float] = 0.0
     tien_nt4: Optional[float] = 0.0
     tien4: Optional[float] = 0.0
-    gia_tb_tt: Optional[str] = "K"
+    gia_tb_tt: Optional[str] = "C"
 
     # Display / Joined fields
     ten_vt: Optional[str] = ""
@@ -131,3 +131,79 @@ class VoucherListResponse(BaseModel):
     items: List[VoucherHeaderSchema]
     pagination: VoucherListPagination
     summary: VoucherSummary
+
+class VoucherCreateRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    ma_dvcs: Optional[str] = "S1"
+    ma_ct: Optional[str] = "X1"
+    nh_ct: Optional[str] = "2"
+    ma_tte: Optional[str] = "VND"
+    ty_gia: Optional[float] = 1.0
+    ngay_ps: Optional[str] = None
+    ngay_ct: str
+    so_ct: Optional[str] = ""
+    ma_xe: Optional[str] = ""
+    ma_bp: Optional[str] = ""
+    ma_hd: Optional[str] = ""
+    ma_dt: str
+    ma_nx: Optional[str] = "131"
+    tk2: Optional[str] = "1311"
+    tk3: Optional[str] = "33311"
+    tk_du3: Optional[str] = "1311"
+    tk4: Optional[str] = "521"
+    ong_ba: Optional[str] = ""
+    dia_chi: Optional[str] = ""
+    dien_giai0: Optional[str] = ""
+    desc_en0: Optional[str] = ""
+    ttien_nt: Optional[float] = 0.0
+    ttien_nt0: Optional[float] = 0.0
+    ttien_nt2: Optional[float] = 0.0
+    ttien_nt3: Optional[float] = 0.0
+    ttien_nt4: Optional[float] = 0.0
+    ttien: Optional[float] = 0.0
+    ttien0: Optional[float] = 0.0
+    ttien3: Optional[float] = 0.0
+    ttien2: Optional[float] = 0.0
+    ttien4: Optional[float] = 0.0
+    loai_ck: Optional[str] = "1"
+    tyle_ck: Optional[float] = 0.0
+    han_tt: Optional[int] = 0
+    ma_thue: Optional[str] = ""
+    thue_gtgt: Optional[float] = 0.0
+    ma_dtgtgt: Optional[str] = ""
+    ten_dtgtgt: Optional[str] = ""
+    so_ct0: Optional[str] = ""
+    ngay_ct0: Optional[str] = None
+    stt_hbtl: Optional[str] = ""
+    confirmed: Optional[bool] = True
+    posted: Optional[bool] = True
+    printed: Optional[bool] = False
+    user_name: Optional[str] = ""
+    items: List[VoucherDetailSchema] = []
+
+class VoucherUpdateRequest(VoucherCreateRequest):
+    stt: Optional[str] = None
+
+class CheckNumberRequest(BaseModel):
+    ma_dvcs: Optional[str] = "S1"
+    moi_sua: Optional[str] = "M"
+    stt: Optional[str] = ""
+    ma_ct: Optional[str] = "X1"
+    ngay_ct: str
+    so_ct: str
+
+class CheckNumberResponse(BaseModel):
+    is_duplicate: bool
+    valid_so_ct: str
+    message: str
+
+class VoucherSaveResponse(BaseModel):
+    stt: str
+    so_ct: str
+    message: str = "Lưu chứng từ thành công."
+
+class VoucherDeleteResponse(BaseModel):
+    stt: str
+    message: str = "Xóa chứng từ thành công."
+

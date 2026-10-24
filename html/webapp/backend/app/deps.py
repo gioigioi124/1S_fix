@@ -9,7 +9,7 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     Returns default authenticated operator context.
     """
     return {
-        "username": "KETOAN01",
+        "username": "KTCN3",
         "full_name": "Kế toán bán hàng",
         "ma_dvcs": "01",
         "role": "accountant"

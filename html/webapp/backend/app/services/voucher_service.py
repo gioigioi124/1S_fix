@@ -1,6 +1,11 @@
-from typing import Optional
+from typing import Optional, Tuple
 from app.repositories.voucher_repo import voucher_repository
-from app.schemas.voucher import VoucherListResponse, VoucherDetailResponse
+from app.schemas.voucher import (
+    VoucherListResponse, VoucherDetailResponse,
+    VoucherCreateRequest, VoucherUpdateRequest,
+    VoucherSaveResponse, VoucherDeleteResponse,
+    CheckNumberRequest, CheckNumberResponse
+)
 
 class VoucherService:
     def __init__(self):
@@ -52,5 +57,44 @@ class VoucherService:
 
     def get_voucher(self, stt: str) -> Optional[VoucherDetailResponse]:
         return self.repo.get_voucher_detail(stt)
+
+    def create_voucher(self, data: VoucherCreateRequest, user_name: str = "KTCN3") -> VoucherSaveResponse:
+        """
+        Create a new sales voucher (mode 'M') on VP_2014 with ACID transaction.
+        """
+        return self.repo.save_voucher(data, mode="M", user_name=user_name)
+
+    def update_voucher(self, stt: str, data: VoucherUpdateRequest, user_name: str = "KTCN3") -> VoucherSaveResponse:
+        """
+        Update an existing sales voucher (mode 'S') on VP_2014 with ACID transaction.
+        """
+        return self.repo.save_voucher(data, mode="S", stt_override=stt, user_name=user_name)
+
+    def delete_voucher(self, stt: str, user_name: str = "KTCN3") -> VoucherDeleteResponse:
+        """
+        Delete an existing voucher from VP_2014 via CtBH_Delete with ACID transaction.
+        """
+        return self.repo.delete_voucher(stt=stt, user_name=user_name)
+
+    def get_next_number(self, ma_dvcs: str = "S1", ma_ct: str = "X1", ngay_ct: Optional[str] = None) -> str:
+        """
+        Get suggested next voucher number (e.g. HD1000 -> HD1001).
+        """
+        return self.repo.get_next_voucher_number(ma_dvcs=ma_dvcs, ma_ct=ma_ct, ngay_ct=ngay_ct)
+
+    def check_number(self, req: CheckNumberRequest) -> CheckNumberResponse:
+        """
+        Check duplicate voucher number and auto-increment if duplicate.
+        """
+        is_dup, valid_so_ct = self.repo.check_duplicate_number(
+            ma_dvcs=req.ma_dvcs or "S1",
+            moi_sua=req.moi_sua or "M",
+            stt=req.stt or "",
+            ma_ct=req.ma_ct or "X1",
+            ngay_ct=req.ngay_ct,
+            so_ct=req.so_ct
+        )
+        msg = "Số chứng từ hợp lệ." if not is_dup else f"Số chứng từ đã trùng, tự động tăng thành {valid_so_ct}."
+        return CheckNumberResponse(is_duplicate=is_dup, valid_so_ct=valid_so_ct, message=msg)
 
 voucher_service = VoucherService()

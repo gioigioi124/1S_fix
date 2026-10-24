@@ -8,7 +8,8 @@ interface PickupDialogProps {
   isOpen: boolean;
   onClose: () => void;
   maDt?: string;
-  onAccept: (selectedSlips: PickupSlip[], items: PickupItem[]) => void;
+  ngayCt?: string;
+  onAccept: (selectedSlips: PickupSlip[], items: any[], maXe?: string) => void;
 }
 
 /**
@@ -22,6 +23,7 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
   isOpen,
   onClose,
   maDt,
+  ngayCt,
   onAccept,
 }) => {
   const [slips, setSlips] = useState<PickupSlip[]>([]);
@@ -35,9 +37,13 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
   const loadSlips = useCallback(async () => {
     setLoading(true);
     try {
-      const url = maDt
-        ? `/api/pickup/list?ma_dt=${encodeURIComponent(maDt)}`
-        : "/api/pickup/list";
+      const q = new URLSearchParams();
+      if (maDt) q.append("ma_dt", maDt);
+      if (ngayCt) {
+        q.append("ngay_ct1", ngayCt);
+        q.append("ngay_ct2", ngayCt);
+      }
+      const url = `/api/pickup/list?${q.toString()}`;
       const res = await fetch(url);
       const data = await res.json();
       if (data.success && data.data?.items) {
@@ -51,7 +57,7 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [maDt]);
+  }, [maDt, ngayCt]);
 
   useEffect(() => {
     if (isOpen) {
@@ -104,11 +110,32 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     setSelectedStts(new Set());
   }, []);
 
-  const handleAccept = useCallback(() => {
-    const selected = slips.filter((s) => selectedStts.has(s.stt));
-    onAccept(selected, activeItems);
-    onClose();
-  }, [slips, selectedStts, activeItems, onAccept, onClose]);
+  const handleAccept = useCallback(async () => {
+    if (selectedStts.size === 0) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/pickup/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stts: Array.from(selectedStts),
+          ma_dt: maDt,
+          ngay_ct: ngayCt,
+        }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        const selected = slips.filter((s) => selectedStts.has(s.stt));
+        onAccept(selected, json.data.rows || [], json.data.ma_xe || "");
+        onClose();
+      }
+    } catch (err) {
+      console.error("Error accepting pickup slips:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedStts, slips, maDt, ngayCt, onAccept, onClose]);
+
 
   // ===== Hotkey chuẩn VFP ctbhch (plan §7.2.3) =====
   useEffect(() => {

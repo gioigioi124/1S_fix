@@ -29,6 +29,7 @@ class KhachHangLookup(BaseModel):
     toi_han: Optional[float] = 0.0
     doi_tac: Optional[str] = ""
     ma_bp: Optional[str] = ""
+    ten_bp: Optional[str] = ""
     ma_xe: Optional[str] = ""
 
 class KhoLookup(BaseModel):
