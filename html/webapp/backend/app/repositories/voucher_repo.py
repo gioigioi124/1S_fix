@@ -599,25 +599,32 @@ class VoucherRepository:
 
     def generate_stt(self, ma_dvcs: str = "S1", cur: Optional[Any] = None) -> str:
         """
-        Generates a unique 20-character ERP key index via VTSYS.dbo.ST_Increase_KeyIndex.
-        Falls back to high-entropy 20-char key if offline or mock.
+        Generates a unique 20-char ERP key via VTSYS.dbo.ST_Increase_KeyIndex.
+
+        BẮT BUỘC có `SET NOCOUNT ON`: SP này UPDATE bảng counter `VTSYS.dbo.DmStt`
+        TRƯỚC khi SELECT @p_Stt. Nếu không tắt NOCOUNT, pyodbc nhận được một result-set
+        "rowcount" trước và ném `ProgrammingError: No results` ở dòng SELECT cuối →
+        code rơi vào nhánh fallback Python (sinh Stt kiểu `S11...`), làm Stt KHÁC hoàn toàn
+        với VFP (VFP dùng counter `DmStt` → `'S1' + 18 chữ số`, ví dụ 'S1000000000014766996').
         """
         clean_dvcs = (ma_dvcs or "S1").strip().upper()[:2]
         if cur is not None:
             try:
                 sp_sql = f"""
+                    SET NOCOUNT ON;
                     DECLARE @p_Stt char(20) = '';
                     EXEC {self.sys_db}.dbo.ST_Increase_KeyIndex @p_Ma_DvCs=?, @p_Stt=@p_Stt OUTPUT;
-                    SELECT @p_Stt;
+                    SELECT @p_Stt AS Stt;
                 """
                 cur.execute(sp_sql, [clean_dvcs])
                 r = cur.fetchone()
                 if r and r[0] and r[0].strip():
                     return r[0].strip()
+                logger.warning("ST_Increase_KeyIndex returned empty value; using fallback key.")
             except Exception as e:
                 logger.warning(f"Error calling ST_Increase_KeyIndex: {e}")
 
-        # Deterministic 20-character key fallback: DvCs(2) + 18 digits
+        # Fallback an toàn (chỉ dùng khi SP lỗi/mất kết nối): DvCs(2) + 18 chữ số.
         t_ns = time.time_ns()
         rnd = random.randint(1000, 9999)
         tail = f"{t_ns}{rnd}"[-18:].zfill(18)
@@ -672,7 +679,8 @@ class VoucherRepository:
             if safe_ma_tte == "VND" and 1 <= gia_nt9 <= 10:
                 chiet_khau = 0.0
 
-            if loai_vt == "2":
+            # Loai_Vt '2' (Mút xốp) và '4' dùng cùng quy cách So_Luong = So_Tam * He_So8
+            if loai_vt in ("2", "4"):
                 so_luong_ban = round_amount(so_tam * he_so8, 2)
                 it.so_luong8 = so_luong_ban
                 it.so_luong9 = so_luong_ban
@@ -707,37 +715,69 @@ class VoucherRepository:
 
             it.chiet_khau = chiet_khau
 
-            # Fix #21: COGS fields must ALWAYS be 0 on sales voucher
-            it.gia_nt = 0.0
-            it.gia = 0.0
-            it.tien_nt = 0.0
-            it.tien = 0.0
+            # Fix #21 (mở rộng): 4 cột GIÁ VỐN bên phiếu bán hàng LUÔN để NULL.
+            # Sổ giá vốn xuất kho cuối tháng sẽ tính và ghi ngược vào 4 cột này.
+            it.gia_nt = None
+            it.gia = None
+            it.tien_nt = None
+            it.tien = None
+
+            # NULL-policy khớp VFP (Ma_Ct='X1'): chiết khấu 0 -> Chiet_Khau/Tien_Nt4/Tien4 = NULL;
+            # tk_du4 (TK chiết khấu) cũng NULL khi không có chiết khấu; Tien_Nt3/Tien3 -> NULL.
+            if chiet_khau <= 0:
+                it.chiet_khau = None
+                it.tien_nt4 = None
+                it.tien4 = None
+                it.tk_du4 = None
+            it.tien_nt3 = None
+            it.tien3 = None
 
         # ===== CHỐT 6: ĐỒNG BỘ TỔNG HEADER & THUẾ GTGT (FIX #10) =====
-        data.ttien_nt = round_amount(sum(it.tien_nt9 for it in data.items), 2)
-        data.ttien_nt2 = round_amount(sum(it.tien_nt2 for it in data.items), 2)
-        data.ttien_nt4 = round_amount(sum(it.tien_nt4 for it in data.items), 2)
-        data.ttien = float(round_vnd(sum(it.tien9 for it in data.items)))
-        data.ttien2 = float(round_vnd(sum(it.tien2 for it in data.items)))
-        data.ttien4 = float(round_vnd(sum(it.tien4 for it in data.items)))
+        # CHỈ cộng dồn các cột TIỀN BÁN. TTien_Nt / TTien là GIÁ VỐN -> để NULL.
+        data.ttien_nt2 = round_amount(sum(it.tien_nt2 for it in data.items if it.tien_nt2), 2)
+        _nt4 = round_amount(sum(it.tien_nt4 for it in data.items if it.tien_nt4), 2)
+        _t4 = float(round_vnd(sum(it.tien4 for it in data.items if it.tien4)))
+        data.ttien2 = float(round_vnd(sum(it.tien2 for it in data.items if it.tien2)))
 
-        thue_gtgt = float(data.thue_gtgt or 0.0)
-        loai_ck = data.loai_ck if data.loai_ck in ["0", "1"] else "1"
-        if thue_gtgt > 0:
-            if loai_ck == "1":
-                data.ttien_nt3 = round_amount(data.ttien_nt2 * thue_gtgt / 100.0, 2)
-            else:
-                data.ttien_nt3 = round_amount(data.ttien_nt * thue_gtgt / 100.0, 2)
-            data.ttien3 = float(round_vnd(data.ttien_nt3 * safe_ty_gia))
-        else:
-            data.ttien_nt3 = 0.0
-            data.ttien3 = 0.0
+        # Fix #21 (mở rộng) + NULL-policy VFP:
+        #   - TTien_Nt / TTien (giá vốn) LUÔN NULL khi lưu phiếu bán.
+        #   - TTien_Nt3 / TTien3 LUÔN NULL (không tính VAT; Ma_Thue/Thue_GTGT = NULL).
+        #   - TTien_Nt4 / TTien4 NULL khi không có chiết khấu.
+        data.ttien_nt = None
+        data.ttien = None
+        data.ttien_nt3 = None
+        data.ttien3 = None
+        data.ttien_nt4 = _nt4 if _nt4 > 0 else None
+        data.ttien4 = _t4 if _t4 > 0 else None
 
-        data.ttien_nt0 = round_amount(data.ttien_nt2 + data.ttien_nt3, 2)
-        data.ttien0 = float(round_vnd(data.ttien2 + data.ttien3))
+        # Nghiệp vụ chứng từ bán hàng VP_2014 (đối chiếu dữ liệu VFP thật):
+        #   - Loai_Ck LUÔN = '2'
+        #   - Ma_Thue & Thue_GTGT LUÔN = NULL (không tính VAT)
+        data.loai_ck = "2"
+        data.ma_thue = None
+        data.thue_gtgt = None
+
+        data.ttien_nt0 = round_amount((data.ttien_nt2 or 0.0) + (data.ttien_nt3 or 0.0), 2)
+        data.ttien0 = float(round_vnd((data.ttien2 or 0.0) + (data.ttien3 or 0.0)))
 
         # ===== CHỐT 7: CHỐNG TRÙNG SỐ & GHI BỀN VỮNG TRONG TRANSACTION ACID =====
         with get_db_transaction(self.vp_db) as (conn, cur):
+            # CHỐT 2b (trong transaction): MÃ KHÁCH HÀNG PHẢI TỒN TẠI TRONG DmDt.
+            # Chặn ghi rác: nếu người dùng gõ TÊN khách thay vì MÃ, Ma_Dt không khớp DmDt
+            # -> LEFT JOIN lúc đọc trả Ten_Dt = NULL. Validate FK trước khi ghi.
+            clean_ma_dt = (data.ma_dt or "").strip().upper()
+            cur.execute(
+                f"SELECT TOP 1 1 FROM {self.sys_db}.dbo.DmDt WITH (NOLOCK) "
+                f"WHERE UPPER(RTRIM(Ma_Dt)) = ?",
+                [clean_ma_dt],
+            )
+            if cur.fetchone() is None:
+                raise ValueError(
+                    f"Mã khách hàng '{clean_ma_dt}' không tồn tại trong danh mục DmDt! "
+                    f"Vui lòng chọn mã hợp lệ từ danh sách gợi ý."
+                )
+            data.ma_dt = clean_ma_dt
+
             is_dup, final_so_ct = self.check_duplicate_number(
                 ma_dvcs=data.ma_dvcs or "S1",
                 moi_sua=mode,
@@ -783,14 +823,14 @@ class VoucherRepository:
                 """
                 cur.execute(insert_header_sql, [
                     stt, data.ma_dvcs or "S1", data.ma_ct or "X1", data.nh_ct or "2", data.ma_tte or "VND", safe_ty_gia,
-                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or "", data.ma_bp or "", data.ma_hd or "",
-                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", data.tk3 or "33311", data.tk_du3 or "1311", data.tk4 or "521",
-                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or "",
+                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or None, data.ma_bp or "", data.ma_hd or None,
+                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", None, None, None,
+                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or None,
                     data.ttien_nt, data.ttien_nt0, data.ttien_nt2, data.ttien_nt3, data.ttien_nt4,
                     data.ttien, data.ttien0, data.ttien3, data.ttien2, data.ttien4,
-                    data.loai_ck or "1", data.tyle_ck or 0.0, data.han_tt or 0, data.ma_thue or "", thue_gtgt,
-                    data.ma_dtgtgt or "", data.ten_dtgtgt or "", data.so_ct0 or "", data.ngay_ct0, data.stt_hbtl or "",
-                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, 1 if data.printed else 0, user_name or "KTCN3"
+                    data.loai_ck or "2", None, None, data.ma_thue, data.thue_gtgt,
+                    data.ma_dtgtgt or None, data.ten_dtgtgt or None, data.so_ct0 or None, data.ngay_ct0, data.stt_hbtl or None,
+                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, (1 if data.printed else None), user_name or "KTCN3"
                 ])
             else:
                 update_header_sql = f"""
@@ -809,14 +849,14 @@ class VoucherRepository:
                 """
                 cur.execute(update_header_sql, [
                     data.ma_dvcs or "S1", data.ma_ct or "X1", data.nh_ct or "2", data.ma_tte or "VND", safe_ty_gia,
-                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or "", data.ma_bp or "", data.ma_hd or "",
-                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", data.tk3 or "33311", data.tk_du3 or "1311", data.tk4 or "521",
-                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or "",
+                    data.ngay_ps or data.ngay_ct, data.ngay_ct, final_so_ct, data.ma_xe or None, data.ma_bp or "", data.ma_hd or None,
+                    data.ma_dt, data.ma_nx or "131", data.tk2 or "1311", None, None, None,
+                    data.ong_ba or "", data.dia_chi or "", data.dien_giai0 or "", data.desc_en0 or None,
                     data.ttien_nt, data.ttien_nt0, data.ttien_nt2, data.ttien_nt3, data.ttien_nt4,
                     data.ttien, data.ttien0, data.ttien3, data.ttien2, data.ttien4,
-                    data.loai_ck or "1", data.tyle_ck or 0.0, data.han_tt or 0, data.ma_thue or "", thue_gtgt,
-                    data.ma_dtgtgt or "", data.ten_dtgtgt or "", data.so_ct0 or "", data.ngay_ct0,
-                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, 1 if data.printed else 0, user_name or "KTCN3",
+                    data.loai_ck or "2", None, None, data.ma_thue, data.thue_gtgt,
+                    data.ma_dtgtgt or None, data.ten_dtgtgt or None, data.so_ct0 or None, data.ngay_ct0,
+                    1 if data.confirmed is not False else 1, 1 if data.posted else 0, (1 if data.printed else None), user_name or "KTCN3",
                     stt
                 ])
 
@@ -844,39 +884,111 @@ class VoucherRepository:
             for it in data.items:
                 stt0 = self.generate_stt(data.ma_dvcs or "S1", cur)
                 cur.execute(insert_detail_sql, [
-                    it.stt_px or None, stt0, stt, it.tk or "632", it.tk_du or "1561", it.tk_du2 or "5111", it.tk_du4 or "521",
-                    it.ma_kho or "", it.ma_vt, it.dvt or "", it.dvt_ban or it.dvt or "", it.so_tam or 0.0, it.he_so8 or 1.0,
+                    it.stt_px or None, stt0, stt, it.tk or "632", it.tk_du or "1561", it.tk_du2 or "5111", it.tk_du4 or None,
+                    it.ma_kho or "", it.ma_vt, it.dvt or "", it.dvt_ban or None, it.so_tam or 0.0, it.he_so8 or 1.0,
                     it.so_luong8 or 0.0, it.he_so9 or 1.0, it.so_luong9 or 0.0, it.gia_nt9 or 0.0, it.gia9 or 0.0,
-                    it.tien_nt9 or 0.0, it.tien9 or 0.0, it.so_luong or 0.0, 0.0, 0.0, 0.0,
-                    0.0, it.gia_nt2 or 0.0, it.gia2 or 0.0, it.tien_nt2 or 0.0, it.tien2 or 0.0, it.tien_nt3 or 0.0,
-                    it.tien3 or 0.0, it.chiet_khau or 0.0, it.tien_nt4 or 0.0, it.tien4 or 0.0, "C"
+                    it.tien_nt9 or 0.0, it.tien9 or 0.0, it.so_luong or 0.0, None, None, None,
+                    None, it.gia_nt2 or 0.0, it.gia2 or 0.0, it.tien_nt2 or 0.0, it.tien2 or 0.0, it.tien_nt3,
+                    it.tien3, it.chiet_khau, it.tien_nt4, it.tien4, "C"
                 ])
+
+            # 2b. Chế độ Sửa 'S': xóa sổ cái cũ của chứng từ TRONG transaction trước khi post lại.
+            #     Bắt buộc, vì nếu không CtBH_Post/CtBH_SoCaiVT_Save gọi lần 2 sẽ APPEND thêm
+            #     các dòng SoCai/SoCaiVT của cùng Stt -> nhân đôi bút toán sổ cái.
+            #     Cùng transaction với ghi Header+Detail nên vẫn đảm bảo ACID.
+            if mode == "S":
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.SoCai WHERE Stt = ?", [stt])
+                cur.execute(f"DELETE FROM {self.vp_db}.dbo.SoCaiVT WHERE Stt = ?", [stt])
 
             # 3. Post Ledger & Save Document Number
             try:
                 cur.execute(f"SET NOCOUNT ON; EXEC {self.vp_db}.dbo.CtBH_Post @p_Kieu='1', @p_Stt=?, @p_UserName=?", [stt, user_name or "KTCN3"])
             except Exception as e:
                 logger.warning(f"CtBH_Post warning: {e}")
+                # Đã xóa sổ cái cũ mà post lại thất bại -> rollback để bảo toàn sổ cái gốc
+                if mode == "S":
+                    raise
+
+            # 3b. Ghi SỔ CÁI TÀI KHOẢN (SoCai) — bút toán DOANH THU:
+            #        Nợ TK công nợ (Tk2, mặc định 1311) / Có TK doanh thu (chi tiết Tk_Du2, mặc định 5112)
+            #        số tiền = TTien_Nt2 (doanh thu sau chiết khấu, trước VAT).
+            #     ⚠️ BẮT BUỘC: công nợ khách hàng đọc từ dbo.SoCai, nên THIẾU bước này thì
+            #        chứng từ đã lưu sẽ KHÔNG xuất hiện trong bảng công nợ / cảnh báo hạn mức.
+            #     Chuẩn 1S (đối chiếu VFP thật): MỖI phiếu X1 ghi ĐÚNG 1 dòng SoCai.
+            #     Bút toán GIÁ VỐN (Nợ 632x / Có 155) KHÔNG ghi ở đây — sổ giá vốn cuối tháng lo.
+            #     Nhóm theo Tk_Co (nếu nhiều TK doanh thu thì tách dòng; bình thường chỉ 1 nhóm).
+            revenue_groups: Dict[str, float] = {}
+            for it in data.items:
+                tk_co = (it.tk_du2 or "").strip()
+                if not tk_co:
+                    continue
+                revenue_groups[tk_co] = revenue_groups.get(tk_co, 0.0) + float(it.tien_nt2 or 0.0)
+
+            if revenue_groups:
+                tk_no = (data.tk2 or "1311").strip() or "1311"
+                safe_ccy = (data.ma_tte or "VND").strip().upper()
+                fn = f"{self.vp_db}.dbo.fn_UnicodeToTCVN"
+                for tk_co, group_amount_nt in revenue_groups.items():
+                    amount_nt = round_amount(group_amount_nt, 2)
+                    if abs(amount_nt) < 0.005:
+                        continue
+                    amount_vnd = float(round_vnd(amount_nt * safe_ty_gia))
+                    tien_vnd = amount_vnd
+                    tien_nt = None if safe_ccy == "VND" else amount_nt
+                    so_ct_line = (final_so_ct or "").strip() or None
+                    try:
+                        # Văn bản truyền xuống SP PHẢI là TCVN3 (SP không tự chuyển mã).
+                        cur.execute(f"""
+                            SET NOCOUNT ON;
+                            DECLARE @p_Ong_Ba nvarchar(64)      = {fn}(?);
+                            DECLARE @p_Dien_Giai nvarchar(128)  = {fn}(?);
+                            DECLARE @p_Dien_GiaiN nvarchar(128) = {fn}(?);
+                            DECLARE @p_Dien_GiaiC nvarchar(128) = {fn}(?);
+                            EXEC {self.vp_db}.dbo.CtBH_SoCai
+                              @p_Ma_Dvcs=?, @p_Stt=?, @p_Stt0=?, @p_Ma_Ct=?, @p_Nh_Ct=?,
+                              @p_Ngay_Ct=?, @p_So_Ct=?, @p_Ma_Dt0=?, @p_Ong_Ba=@p_Ong_Ba,
+                              @p_Dien_Giai=@p_Dien_Giai, @p_Tk_No=?, @p_Ma_Dt_No=?, @p_Tk_Co=?, @p_Ma_Dt_Co=?,
+                              @p_Ma_Tte=?, @p_Ty_Gia=?, @p_Ma_HD=?, @p_Ma_Bp=?,
+                              @p_Dien_GiaiN=@p_Dien_GiaiN, @p_Dien_GiaiC=@p_Dien_GiaiC,
+                              @p_Tien_Nt=?, @p_Tien=?, @p_Stt_Bt=?,
+                              @p_Desc_EN=NULL, @p_Desc_ENN=NULL, @p_Desc_ENC=NULL;
+                        """, [
+                            data.ong_ba or "",
+                            data.dien_giai0 or "",
+                            data.dien_giai0 or "",
+                            data.dien_giai0 or "",
+                            data.ma_dvcs or "S1", stt, stt, data.ma_ct or "X1", data.nh_ct or "2",
+                            data.ngay_ct, so_ct_line, data.ma_dt,
+                            tk_no, data.ma_dt, tk_co, "",
+                            data.ma_tte or "VND", safe_ty_gia, data.ma_hd or None, data.ma_bp or None,
+                            tien_nt, tien_vnd, "2",
+                        ])
+                    except Exception as e:
+                        logger.warning(f"CtBH_SoCai warning: {e}")
+                        if mode == "S":
+                            raise
+
             try:
                 cur.execute(f"SET NOCOUNT ON; EXEC {self.vp_db}.dbo.CtBH_SoCaiVT_Save @p_Stt=?", [stt])
             except Exception as e:
                 logger.warning(f"CtBH_SoCaiVT_Save warning: {e}")
+                if mode == "S":
+                    raise
             try:
                 cur.execute(f"SET NOCOUNT ON; EXEC {self.sys_db}.dbo.ST_Save_Number @p_Ma_DvCs=?, @p_Ma_Ct=?, @p_So_Ct=?", [data.ma_dvcs or "S1", data.ma_ct or "X1", final_so_ct])
             except Exception as e:
                 logger.warning(f"ST_Save_Number warning: {e}")
 
             # 4. Integrity Assertion before COMMIT (Header ⟷ Detail sums match)
-            cur.execute(f"SELECT ISNULL(SUM(Tien_Nt2), 0), ISNULL(SUM(Tien_Nt9), 0), COUNT(1) FROM {self.vp_db}.dbo.CtBH0 WHERE Stt = ?", [stt])
+            #    TTien_Nt/TTien là GIÁ VỐN -> NULL nên KHÔNG so sánh với SUM(Tien_Nt9).
+            cur.execute(f"SELECT ISNULL(SUM(Tien_Nt2), 0), COUNT(1) FROM {self.vp_db}.dbo.CtBH0 WHERE Stt = ?", [stt])
             check_row = cur.fetchone()
             if check_row:
                 db_sum2 = float(check_row[0] or 0.0)
-                db_sum9 = float(check_row[1] or 0.0)
-                db_count = int(check_row[2] or 0)
-                if abs(db_sum2 - data.ttien_nt2) > 0.05 or abs(db_sum9 - data.ttien_nt) > 0.05:
+                db_count = int(check_row[1] or 0)
+                if abs(db_sum2 - (data.ttien_nt2 or 0.0)) > 0.05:
                     raise AssertionError(
-                        f"Lệch tổng tiền Header và Detail: DB Tien_Nt2={db_sum2} vs Header={data.ttien_nt2}, "
-                        f"DB Tien_Nt9={db_sum9} vs Header={data.ttien_nt}"
+                        f"Lệch tổng tiền Header và Detail: DB Tien_Nt2={db_sum2} vs Header={data.ttien_nt2}"
                     )
                 if db_count != len(data.items):
                     raise AssertionError(f"Số lượng dòng chi tiết không khớp: DB={db_count} vs Form={len(data.items)}")

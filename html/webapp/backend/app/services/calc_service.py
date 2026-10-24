@@ -15,7 +15,7 @@ class CalcService:
         """
         ty_gia = float(req.ty_gia) if req.ty_gia and req.ty_gia > 0 else 1.0
         thue_gtgt = float(req.thue_gtgt or 0.0)
-        loai_ck = req.loai_ck if req.loai_ck in ["0", "1"] else "1"
+        loai_ck = req.loai_ck if req.loai_ck in ["0", "1", "2"] else "2"
         ma_tte = (req.ma_tte or "VND").strip().upper()
 
         warnings: List[str] = []
@@ -38,8 +38,9 @@ class CalcService:
                 chiet_khau = 0.0
 
             # 1.1 Category specific quantity calculation
-            if loai_vt == "2":
-                # Calc_Loai2 (Mút xốp)
+            #     Loai_Vt '2' (Mút xốp) và '4' dùng cùng quy cách So_Tam * He_So8
+            if loai_vt in ("2", "4"):
+                # Calc_Loai2 (Mút xốp / hàng Loai_Vt='4')
                 so_luong_ban = round_amount(so_tam * he_so8, 2)
                 so_luong8 = so_luong_ban
                 so_luong9 = so_luong_ban

@@ -1,7 +1,11 @@
 import React, { useEffect, useRef } from "react";
 import { VoucherDetail } from "../types/voucher";
 import { formatCurrency, formatQuantity } from "../lib/format";
-import { fetchVatTuOptions, fetchKhoOptions, lookupVatTu } from "../lib/lookups";
+import {
+  fetchVatTuOptions,
+  fetchKhoOptions,
+  lookupVatTu,
+} from "../lib/lookups";
 import { Autocomplete } from "./ui/Autocomplete";
 import { Trash2 } from "lucide-react";
 
@@ -16,7 +20,11 @@ interface DetailGridProps {
   editable?: boolean;
   activeRowIndex?: number;
   onSelectRow?: (index: number) => void;
-  onChangeItem?: (index: number, updatedItem: VoucherDetail, fieldName?: string) => void;
+  onChangeItem?: (
+    index: number,
+    updatedItem: VoucherDetail,
+    fieldName?: string,
+  ) => void;
   onDeleteItem?: (index: number) => void;
   onAddItem?: () => void;
   onValidationError?: (message: string | null) => void;
@@ -41,6 +49,10 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   const tableRef = useRef<HTMLTableElement | null>(null);
   const maVtInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const pendingFocusRowRef = useRef<number | null>(null);
+  // Luôn giữ bản mới nhất của danh sách dòng để tránh callback async (lookup DmVt)
+  // ghi đè các ô người dùng đã nhập (Đơn giá/Số lượng/CK...) bằng snapshot cũ.
+  const itemsRef = useRef<VoucherDetail[]>(items);
+  itemsRef.current = items;
 
   // Khi tạo dòng mới (từ phím Enter tại ô TT hoặc nút Thêm dòng), tự động focus ngay vào ô Mã vật tư của dòng vừa tạo
   useEffect(() => {
@@ -58,7 +70,10 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   }, [items.length]);
 
   // Kiểm tra dữ liệu dòng trước khi cho phép tạo dòng mới
-  const validateRow = (rowIdx: number, trEl?: HTMLTableRowElement | null): string | null => {
+  const validateRow = (
+    rowIdx: number,
+    trEl?: HTMLTableRowElement | null,
+  ): string | null => {
     const it = items[rowIdx];
     if (!it) return "Dòng dữ liệu không tồn tại.";
 
@@ -80,7 +95,9 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
 
     // Kiểm tra có ô input nào trong dòng bị xóa trắng không
     if (trEl) {
-      const rowInputs = Array.from(trEl.querySelectorAll<HTMLInputElement>("input"));
+      const rowInputs = Array.from(
+        trEl.querySelectorAll<HTMLInputElement>("input"),
+      );
       for (const inp of rowInputs) {
         if (inp.value.trim() === "") {
           return `Dòng ${rowIdx + 1}: Không được để trống bất kỳ ô nào trong dòng!`;
@@ -96,7 +113,14 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     if (isNaN(sl9) || sl9 <= 0) {
       return `Dòng ${rowIdx + 1}: Số lượng phải lớn hơn 0!`;
     }
-    if (isNaN(soTam) || soTam <= 0 || isNaN(heSo8) || heSo8 <= 0 || isNaN(sl8) || sl8 <= 0) {
+    if (
+      isNaN(soTam) ||
+      soTam <= 0 ||
+      isNaN(heSo8) ||
+      heSo8 <= 0 ||
+      isNaN(sl8) ||
+      sl8 <= 0
+    ) {
       return `Dòng ${rowIdx + 1}: Số tấm, Hệ số và SL bán phải lớn hơn 0!`;
     }
 
@@ -110,7 +134,10 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     return null;
   };
 
-  const tryAddNewRow = (fromRowIdx: number, trEl?: HTMLTableRowElement | null) => {
+  const tryAddNewRow = (
+    fromRowIdx: number,
+    trEl?: HTMLTableRowElement | null,
+  ) => {
     const err = validateRow(fromRowIdx, trEl);
     if (err) {
       onValidationError?.(err);
@@ -123,50 +150,72 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
 
   // Chỉ tra cứu đầy đủ thông tin vật tư khi người dùng CHỌN từ gợi ý hoặc RỜI Ô (onBlur)
   // Tuyệt đối KHÔNG gọi async ghi đè ma_vt trong lúc người dùng đang gõ từng ký tự!
-  const enrichVatTuRow = async (idx: number, rawCode: string, hintTenVt?: string) => {
-    const it = items[idx];
-    if (!it) return;
+  const enrichVatTuRow = async (
+    idx: number,
+    rawCode: string,
+    hintTenVt?: string,
+  ) => {
     const cleanCode = (rawCode || "").trim().toUpperCase();
     if (!cleanCode) return;
 
-    const baseUpdated: VoucherDetail = {
-      ...it,
-      ma_vt: cleanCode,
-      ten_vt: hintTenVt ?? it.ten_vt,
-      gia_tb_tt: "C",
-    };
-    onChangeItem?.(idx, baseUpdated, "MA_VT");
+    // 1. Ghi ngay mã + tên để UI phản hồi tức thì (giữ nguyên các ô khác của dòng hiện tại).
+    const immediate = itemsRef.current[idx];
+    if (!immediate) return;
+    onChangeItem?.(
+      idx,
+      {
+        ...immediate,
+        ma_vt: cleanCode,
+        ten_vt: hintTenVt ?? immediate.ten_vt,
+        gia_tb_tt: "C",
+      },
+      "MA_VT",
+    );
 
     const found = await lookupVatTu(cleanCode);
-    if (found) {
-      const nextLoaiVt = (found.loai_vt || baseUpdated.loai_vt || "1").trim();
-      const currentSl = baseUpdated.so_luong9 && baseUpdated.so_luong9 > 0 ? baseUpdated.so_luong9 : 1;
-      const enriched: VoucherDetail = {
-        ...baseUpdated,
-        ma_vt: found.ma_vt,
-        ten_vt: found.ten_vt || hintTenVt || baseUpdated.ten_vt || "",
-        dvt: found.dvt || baseUpdated.dvt || "",
-        dvt_ban: found.dvt_ban || found.dvt || baseUpdated.dvt_ban || "",
-        loai_vt: nextLoaiVt,
-        tk_du2: found.tk_dt || baseUpdated.tk_du2 || "5111",
-        tk_du: found.tk_vt || baseUpdated.tk_du || "1561",
-        tk: found.tk_gv || baseUpdated.tk || "632",
-        tk_du4: found.tk_ck || baseUpdated.tk_du4 || "521",
-        he_so9: found.he_so0 || 1.0,
-        so_luong9: currentSl,
-        so_tam: nextLoaiVt === "2" ? ((baseUpdated.so_tam ?? 0) > 0 ? baseUpdated.so_tam! : 1) : currentSl,
-        he_so8: nextLoaiVt === "2" ? ((baseUpdated.he_so8 ?? 0) > 0 ? baseUpdated.he_so8! : 1) : 1,
-        gia_tb_tt: "C",
-      };
-      onChangeItem?.(idx, enriched, "MA_VT_ENRICHED");
-    }
+    if (!found) return;
+
+    // 2. Sau khi lookup xong, LẤY LẠI dòng HIỆN TẠI (người dùng có thể đã sửa
+    //    Đơn giá / Số tấm / Hệ số / SL / Chiết khấu / Mã kho trong lúc chờ).
+    //    Chỉ hợp nhất các trường thuộc danh mục vật tư, KHÔNG ghi đè ô đã nhập.
+    const latest = itemsRef.current[idx];
+    if (!latest) return;
+    // Nếu người dùng đã đổi sang mã vật tư khác trong lúc chờ -> bỏ kết quả cũ.
+    if ((latest.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
+
+    const nextLoaiVt = (found.loai_vt || latest.loai_vt || "1").trim();
+    const isMut = nextLoaiVt === "2" || nextLoaiVt === "4";
+    const currentSl =
+      latest.so_luong9 && latest.so_luong9 > 0 ? latest.so_luong9 : 1;
+    const enriched: VoucherDetail = {
+      ...latest,
+      ma_vt: found.ma_vt || cleanCode,
+      ten_vt: found.ten_vt || hintTenVt || latest.ten_vt || "",
+      dvt: found.dvt || latest.dvt || "",
+      dvt_ban: found.dvt_ban || found.dvt || latest.dvt_ban || "",
+      loai_vt: nextLoaiVt,
+      tk_du2: found.tk_dt || latest.tk_du2 || "5111",
+      tk_du: found.tk_vt || latest.tk_du || "1561",
+      tk: found.tk_gv || latest.tk || "632",
+      tk_du4: found.tk_ck || latest.tk_du4 || undefined,
+      he_so9: found.he_so0 || 1.0,
+      so_luong9: currentSl,
+      so_tam: isMut
+        ? (latest.so_tam ?? 0) > 0
+          ? latest.so_tam!
+          : 1
+        : currentSl,
+      he_so8: isMut ? ((latest.he_so8 ?? 0) > 0 ? latest.he_so8! : 1) : 1,
+      gia_tb_tt: "C",
+    };
+    onChangeItem?.(idx, enriched, "MA_VT_ENRICHED");
   };
 
   // Handle cell navigation (Enter / Shift+Tab / Ctrl+Shift+Tab / F8)
   const handleCellKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
     rowIdx: number,
-    isTtCell: boolean = false
+    isTtCell: boolean = false,
   ) => {
     if (e.key === "F8") {
       e.preventDefault();
@@ -190,8 +239,8 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       if (!table) return;
       const inputs = Array.from(
         table.querySelectorAll<HTMLInputElement>(
-          "input.grid-cell-input:not([disabled])"
-        )
+          "input.grid-cell-input:not([disabled])",
+        ),
       );
       const currIdx = inputs.indexOf(current);
       if (currIdx >= 0 && currIdx < inputs.length - 1) {
@@ -210,8 +259,8 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       if (!table) return;
       const inputs = Array.from(
         table.querySelectorAll<HTMLInputElement>(
-          "input.grid-cell-input:not([disabled])"
-        )
+          "input.grid-cell-input:not([disabled])",
+        ),
       );
       const currIdx = inputs.indexOf(current);
       if (currIdx > 0) {
@@ -276,7 +325,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                   TT
                 </th>
                 {editable && (
-                  <th className="w-10 text-center" scope="col" title="Xóa dòng (F8)">
+                  <th
+                    className="w-10 text-center"
+                    scope="col"
+                    title="Xóa dòng (F8)"
+                  >
                     Xóa
                   </th>
                 )}
@@ -325,15 +378,23 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             inputRef={(el) => {
                               maVtInputRefs.current[idx] = el;
                               if (idx === 0 && firstMaVtRef) {
-                                (firstMaVtRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+                                (
+                                  firstMaVtRef as React.MutableRefObject<HTMLInputElement | null>
+                                ).current = el;
                               }
                             }}
                             selectOnFocus
                             value={it.ma_vt || ""}
                             onChange={(val) =>
-                              onChangeItem?.(idx, { ...it, ma_vt: val }, "MA_VT")
+                              onChangeItem?.(
+                                idx,
+                                { ...it, ma_vt: val },
+                                "MA_VT",
+                              )
                             }
-                            onSelect={(opt) => enrichVatTuRow(idx, opt.value, opt.hint)}
+                            onSelect={(opt) =>
+                              enrichVatTuRow(idx, opt.value, opt.hint)
+                            }
                             onBlur={() => {
                               if (it.ma_vt && it.ma_vt.trim()) {
                                 enrichVatTuRow(idx, it.ma_vt);
@@ -402,14 +463,17 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                               onChangeItem?.(
                                 idx,
                                 { ...it, ma_kho: val.toUpperCase() },
-                                "MA_KHO"
+                                "MA_KHO",
                               )
                             }
                             onSelect={(opt) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, ma_kho: opt.value.trim().toUpperCase() },
-                                "MA_KHO"
+                                {
+                                  ...it,
+                                  ma_kho: opt.value.trim().toUpperCase(),
+                                },
+                                "MA_KHO",
                               )
                             }
                             onFocus={() => onSelectRow?.(idx)}
@@ -429,8 +493,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             onChange={(e) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, so_tam: parseFloat(e.target.value) || 0 },
-                                "SO_TAM"
+                                {
+                                  ...it,
+                                  so_tam: parseFloat(e.target.value) || 0,
+                                },
+                                "SO_TAM",
                               )
                             }
                             onFocus={(e) => {
@@ -450,8 +517,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             onChange={(e) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, he_so8: parseFloat(e.target.value) || 0 },
-                                "HE_SO8"
+                                {
+                                  ...it,
+                                  he_so8: parseFloat(e.target.value) || 0,
+                                },
+                                "HE_SO8",
                               )
                             }
                             onFocus={(e) => {
@@ -483,8 +553,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             onChange={(e) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, gia_nt9: parseFloat(e.target.value) || 0 },
-                                "GIA_NT9"
+                                {
+                                  ...it,
+                                  gia_nt9: parseFloat(e.target.value) || 0,
+                                },
+                                "GIA_NT9",
                               )
                             }
                             onFocus={(e) => {
@@ -504,8 +577,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             onChange={(e) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, tien_nt9: parseFloat(e.target.value) || 0 },
-                                "TIEN_NT9"
+                                {
+                                  ...it,
+                                  tien_nt9: parseFloat(e.target.value) || 0,
+                                },
+                                "TIEN_NT9",
                               )
                             }
                             onFocus={(e) => {
@@ -525,8 +601,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             onChange={(e) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, chiet_khau: parseFloat(e.target.value) || 0 },
-                                "CHIET_KHAU"
+                                {
+                                  ...it,
+                                  chiet_khau: parseFloat(e.target.value) || 0,
+                                },
+                                "CHIET_KHAU",
                               )
                             }
                             onFocus={(e) => {

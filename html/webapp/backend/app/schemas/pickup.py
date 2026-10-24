@@ -14,6 +14,11 @@ class PickupItemSchema(BaseModel):
     so_luong8: Optional[float] = 0.0
     so_luong9: Optional[float] = 0.0
     loai_vt: Optional[str] = "1"
+    # Tài khoản hạch toán kế thừa từ DmVt (Tk_Gv/Tk_Vt/Tk_Dt/Tk_Ck)
+    tk_gv: Optional[str] = "632"
+    tk_vt: Optional[str] = "1561"
+    tk_dt: Optional[str] = "5111"
+    tk_ck: Optional[str] = "521"
 
 class PickupSlipSchema(BaseModel):
     stt: str

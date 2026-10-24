@@ -104,7 +104,10 @@ class PickupRepository:
                 ISNULL(d.So_Luong9, 0) AS So_Luong9,
                 {self.fn_uni}(v.Ten_Vt) AS Ten_Vt,
                 ISNULL(v.Loai_Vt, '1') AS Loai_Vt,
-                v.Tk_Gv, v.Tk_Vt, v.Tk_Dt, v.Tk_Ck
+                ISNULL(v.Tk_Gv, '632') AS Tk_Gv,
+                ISNULL(v.Tk_Vt, '1561') AS Tk_Vt,
+                ISNULL(v.Tk_Dt, '5111') AS Tk_Dt,
+                ISNULL(v.Tk_Ck, '521') AS Tk_Ck
             FROM {self.kh_db}.dbo.CtBH0 d WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmVt v WITH (NOLOCK) ON v.Ma_Vt = d.Ma_Vt
             WHERE d.Stt = ?
@@ -129,7 +132,11 @@ class PickupRepository:
                         so_luong8=float(r[8] or 0.0),
                         so_luong9=float(r[9] or 0.0),
                         ten_vt=(r[10] or "").strip(),
-                        loai_vt=(r[11] or "1").strip()
+                        loai_vt=(r[11] or "1").strip(),
+                        tk_gv=(r[12] or "632").strip(),
+                        tk_vt=(r[13] or "1561").strip(),
+                        tk_dt=(r[14] or "5111").strip(),
+                        tk_ck=(r[15] or "521").strip()
                     ))
             return PickupDetailResponse(stt=stt, items=items)
         except Exception as e:

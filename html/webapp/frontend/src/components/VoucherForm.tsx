@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { VoucherFullDetail, VoucherDetail } from "../types/voucher";
 import { DetailGrid } from "./DetailGrid";
-import { formatCurrency, formatDate, formatQuantity, getTodayDate } from "../lib/format";
+import {
+  formatCurrency,
+  formatDate,
+  formatQuantity,
+  getTodayDate,
+} from "../lib/format";
 import { Autocomplete } from "./ui/Autocomplete";
 import {
   fetchKhachHangOptions,
@@ -102,71 +107,71 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
 
   // Header State
   const [ngayCt, setNgayCt] = useState<string>(
-    voucher?.ngay_ct || initialInherited?.ngay_ct || getTodayDate()
+    voucher?.ngay_ct || initialInherited?.ngay_ct || getTodayDate(),
   );
   const [soCt, setSoCt] = useState<string>(
-    isCreate ? "" : voucher?.so_ct || initialInherited?.so_ct || ""
+    isCreate ? "" : voucher?.so_ct || initialInherited?.so_ct || "",
   );
   const [maDt, setMaDt] = useState<string>(
-    voucher?.ma_dt || initialInherited?.ma_dt || ""
+    voucher?.ma_dt || initialInherited?.ma_dt || "",
   );
   const [tenDt, setTenDt] = useState<string>(
-    voucher?.ten_dt || initialInherited?.ten_dt || ""
+    voucher?.ten_dt || initialInherited?.ten_dt || "",
   );
   const [ongBa, setOngBa] = useState<string>(
     voucher?.ong_ba ||
       initialInherited?.ong_ba ||
       voucher?.ten_dt ||
       initialInherited?.ten_dt ||
-      ""
+      "",
   );
   const [diaChi, setDiaChi] = useState<string>(
-    voucher?.dia_chi || initialInherited?.dia_chi || ""
+    voucher?.dia_chi || initialInherited?.dia_chi || "",
   );
   const [dienGiai0, setDienGiai0] = useState<string>(
-    voucher?.dien_giai0 || initialInherited?.dien_giai0 || "Xuất bán hàng hóa"
+    voucher?.dien_giai0 || initialInherited?.dien_giai0 || "Xuất bán hàng hóa",
   );
   const [maBp, setMaBp] = useState<string>(
-    voucher?.ma_bp || initialInherited?.ma_bp || ""
+    voucher?.ma_bp || initialInherited?.ma_bp || "",
   );
   const [tenBp, setTenBp] = useState<string>(
-    voucher?.ten_bp || initialInherited?.ten_bp || ""
+    voucher?.ten_bp || initialInherited?.ten_bp || "",
   );
   const [maXe, setMaXe] = useState<string>(
-    voucher?.ma_xe || initialInherited?.ma_xe || ""
+    voucher?.ma_xe || initialInherited?.ma_xe || "",
   );
   const [tenXe, setTenXe] = useState<string>(
-    voucher?.ten_xe || initialInherited?.ten_xe || ""
+    voucher?.ten_xe || initialInherited?.ten_xe || "",
   );
   const [hanTt, setHanTt] = useState<number>(
-    voucher?.han_tt ?? initialInherited?.han_tt ?? 30
+    voucher?.han_tt ?? initialInherited?.han_tt ?? 30,
   );
   const [tyGia, setTyGia] = useState<number>(
-    voucher?.ty_gia ?? initialInherited?.ty_gia ?? 1.0
+    voucher?.ty_gia ?? initialInherited?.ty_gia ?? 1.0,
   );
   const [maTte] = useState<string>(
-    voucher?.ma_tte || initialInherited?.ma_tte || "VND"
+    voucher?.ma_tte || initialInherited?.ma_tte || "VND",
   );
   const [maNx] = useState<string>(
-    voucher?.ma_nx || initialInherited?.ma_nx || "131"
+    voucher?.ma_nx || initialInherited?.ma_nx || "131",
   );
   const [tk2, setTk2] = useState<string>(
-    voucher?.tk2 || initialInherited?.tk2 || "1311"
+    voucher?.tk2 || initialInherited?.tk2 || "1311",
   );
   const [tk3] = useState<string>(
-    voucher?.tk3 || initialInherited?.tk3 || "33311"
+    voucher?.tk3 || initialInherited?.tk3 || "33311",
   );
   const [thueGtgt] = useState<number>(
-    voucher?.thue_gtgt ?? initialInherited?.thue_gtgt ?? 0
+    voucher?.thue_gtgt ?? initialInherited?.thue_gtgt ?? 0,
   );
   const [loaiCk] = useState<string>(
-    voucher?.loai_ck || initialInherited?.loai_ck || "1"
+    voucher?.loai_ck || initialInherited?.loai_ck || "2",
   );
   const [maCt] = useState<string>(
-    voucher?.ma_ct || initialInherited?.ma_ct || "X1"
+    voucher?.ma_ct || initialInherited?.ma_ct || "X1",
   );
   const [maDtGtGt, setMaDtGtGt] = useState<string>(
-    voucher?.ma_dtgtgt || initialInherited?.ma_dtgtgt || ""
+    voucher?.ma_dtgtgt || initialInherited?.ma_dtgtgt || "",
   );
   const [showAccountPicker, setShowAccountPicker] = useState<boolean>(false);
 
@@ -174,12 +179,22 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const [items, setItems] = useState<VoucherDetail[]>(() => {
     if (voucher?.items && voucher.items.length > 0) {
       return voucher.items.map((it) =>
-        calcLoai2Item({ ...it, gia_tb_tt: "C" }, voucher.ty_gia || 1.0, "", voucher.ma_tte || "VND")
+        calcLoai2Item(
+          { ...it, gia_tb_tt: "C" },
+          voucher.ty_gia || 1.0,
+          "",
+          voucher.ma_tte || "VND",
+        ),
       );
     }
     if (initialInherited?.items && initialInherited.items.length > 0) {
       return initialInherited.items.map((it) =>
-        calcLoai2Item({ ...it, gia_tb_tt: "C" }, initialInherited.ty_gia || 1.0, "", initialInherited.ma_tte || "VND")
+        calcLoai2Item(
+          { ...it, gia_tb_tt: "C" },
+          initialInherited.ty_gia || 1.0,
+          "",
+          initialInherited.ma_tte || "VND",
+        ),
       );
     }
     return [emptyDetailRow()];
@@ -218,7 +233,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     const fetchNextSoCt = async () => {
       try {
         const res = await fetch(
-          `/api/vouchers/next-number?ma_ct=${encodeURIComponent(maCt || "X1")}&ngay_ct=${encodeURIComponent(ngayCt)}`
+          `/api/vouchers/next-number?ma_ct=${encodeURIComponent(maCt || "X1")}&ngay_ct=${encodeURIComponent(ngayCt)}`,
         );
         if (res.ok) {
           const data = await res.json();
@@ -242,7 +257,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   useEffect(() => {
     if (pickupPayload && pickupPayload.items.length > 0) {
       const calculatedItems = pickupPayload.items.map((it) =>
-        calcLoai2Item({ ...it, gia_tb_tt: "C" }, tyGia, "", maTte)
+        calcLoai2Item({ ...it, gia_tb_tt: "C" }, tyGia, "", maTte),
       );
       setItems(calculatedItems);
       // R2.3: Kế thừa ma_xe nếu header đang trống
@@ -319,7 +334,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       return;
     }
     try {
-      const res = await fetch(`/api/debt/customer?ma_dt=${encodeURIComponent(dt)}`);
+      const res = await fetch(
+        `/api/debt/customer?ma_dt=${encodeURIComponent(dt)}`,
+      );
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
@@ -344,11 +361,20 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   }, [maDt, loadDebtInfo]);
 
   // Handle Customer Selection -> tự động điền Tên KH, Ông/Bà (từ Doi_Tac hoặc Ten_Dt), Địa chỉ, Mã bộ phận, Tên bộ phận
+  const [maDtError, setMaDtError] = useState<string | null>(null);
   const handleSelectCustomer = async (selectedCode: string) => {
-    const cleanCode = selectedCode.trim().toUpperCase();
-    setMaDt(cleanCode);
-    const cust = await lookupKhachHang(cleanCode);
-    if (cust) {
+    const raw = selectedCode.trim().toUpperCase();
+    if (!raw) {
+      setMaDtError(null);
+      return;
+    }
+    const cust = await lookupKhachHang(raw);
+    if (cust && cust.ma_dt) {
+      // LUÔN lấy MÃ thật từ danh mục DmDt, không dùng chuỗi người dùng đã gõ.
+      // Tránh trường hợp người dùng gõ TÊN khách -> Ma_Dt bị ghi thành tên (ghi rác).
+      const realCode = cust.ma_dt.trim().toUpperCase();
+      setMaDt(realCode);
+      setMaDtError(null);
       setTenDt(cust.ten_dt || "");
       setOngBa(cust.ong_ba || cust.doi_tac || cust.ten_dt || "");
       setDiaChi(cust.dia_chi || "");
@@ -360,6 +386,13 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         setTenXe("");
       }
       setMaDtGtGt(cust.ms_thue || "");
+    } else {
+      // Không tìm thấy mã khách trong DmDt -> giữ nguyên chuỗi để người dùng sửa,
+      // đánh dấu lỗi và chặn Lưu (khớp hành vi VFP: Ma_Dt phải là mã hợp lệ).
+      setMaDt(raw);
+      setMaDtError(
+        `Mã khách hàng "${raw}" không tồn tại trong danh mục. Vui lòng chọn từ danh sách.`,
+      );
     }
   };
 
@@ -376,16 +409,24 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   };
 
   // Detail Item changes & recalculations
-  const handleItemChange = (idx: number, updatedItem: VoucherDetail, fieldName?: string) => {
+  const handleItemChange = (
+    idx: number,
+    updatedItem: VoucherDetail,
+    fieldName?: string,
+  ) => {
     const calculated = calcLoai2Item(
       { ...updatedItem, gia_tb_tt: "C" },
       tyGia,
       fieldName || "",
-      maTte
+      maTte,
     );
-    const nextItems = [...items];
-    nextItems[idx] = calculated;
-    setItems(nextItems);
+    // Dùng functional update để tránh dùng snapshot `items` cũ khi callback async
+    // (lookup DmVt) hoàn tất muộn hơn các ô người dùng đã nhập.
+    setItems((prev) => {
+      const nextItems = [...prev];
+      nextItems[idx] = calculated;
+      return nextItems;
+    });
   };
 
   const handleDeleteItem = (idx: number) => {
@@ -416,6 +457,10 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       setErrorMessage("Vui lòng chọn Mã khách hàng / Đối tượng.");
       return;
     }
+    if (maDtError) {
+      setErrorMessage(maDtError);
+      return;
+    }
     if (!ngayCt.trim()) {
       setErrorMessage("Vui lòng nhập Ngày hạch toán.");
       return;
@@ -425,7 +470,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       return;
     }
     if (items.length === 0 || !items.some((it) => it.ma_vt?.trim())) {
-      setErrorMessage("Chứng từ phải có ít nhất 1 dòng mặt hàng với Mã vật tư hợp lệ.");
+      setErrorMessage(
+        "Chứng từ phải có ít nhất 1 dòng mặt hàng với Mã vật tư hợp lệ.",
+      );
       return;
     }
 
@@ -534,7 +581,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        const msg = data?.detail?.message || data?.message || "Lỗi khi lưu chứng từ.";
+        const msg =
+          data?.detail?.message || data?.message || "Lỗi khi lưu chứng từ.";
         setErrorMessage(msg);
         return;
       }
@@ -545,7 +593,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       }
 
       setSuccessMessage(
-        `${isCreate ? "Tạo mới" : "Cập nhật"} chứng từ thành công! Số phiếu: ${savedSoCt}`
+        `${isCreate ? "Tạo mới" : "Cập nhật"} chứng từ thành công! Số phiếu: ${savedSoCt}`,
       );
       if (onSaveSuccess && data.data?.stt) {
         setTimeout(() => {
@@ -596,7 +644,11 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <span className="font-bold text-sm tracking-wide uppercase text-white">
-              {isCreate ? "Thêm Mới Chứng Từ" : isEdit ? "Sửa Chứng Từ" : "Xem Chứng Từ"}
+              {isCreate
+                ? "Thêm Mới Chứng Từ"
+                : isEdit
+                  ? "Sửa Chứng Từ"
+                  : "Xem Chứng Từ"}
             </span>
             <span className="text-primary-200 text-xs font-normal">
               / Bán hàng công nợ (ctbhd)
@@ -606,11 +658,15 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 isCreate
                   ? "bg-success-600/30 text-success-200 border-success-400/40"
                   : isEdit
-                  ? "bg-amber-500/30 text-amber-200 border-amber-400/40"
-                  : "bg-white/10 text-white border-white/20"
+                    ? "bg-amber-500/30 text-amber-200 border-amber-400/40"
+                    : "bg-white/10 text-white border-white/20"
               }`}
             >
-              {isCreate ? "MODE: THÊM MỚI (M)" : isEdit ? "MODE: SỬA (S)" : "MODE: XEM"}
+              {isCreate
+                ? "MODE: THÊM MỚI (M)"
+                : isEdit
+                  ? "MODE: SỬA (S)"
+                  : "MODE: XEM"}
             </span>
           </div>
         </div>
@@ -767,7 +823,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                       step="any"
                       className="erp-input w-14 font-mono font-bold text-tertiary-600 text-[11px] py-0 text-center"
                       value={tyGia}
-                      onChange={(e) => setTyGia(parseFloat(e.target.value) || 1.0)}
+                      onChange={(e) =>
+                        setTyGia(parseFloat(e.target.value) || 1.0)
+                      }
                       onFocus={(e) => e.currentTarget.select()}
                     />
                   ) : (
@@ -791,7 +849,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     <span className="text-neutral-300">|</span>
                     <div
                       className={`flex items-center gap-1 px-1.5 py-0.2 rounded text-[11px] font-medium ${
-                        debtInfo.han_muc_no > 0 && debtInfo.du_cuoi > debtInfo.han_muc_no
+                        debtInfo.han_muc_no > 0 &&
+                        debtInfo.du_cuoi > debtInfo.han_muc_no
                           ? "bg-danger-100 text-danger-800 border border-danger-300 font-bold"
                           : "bg-primary-50 text-primary-800 border border-primary-200"
                       }`}
@@ -799,9 +858,12 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     >
                       <CreditCard className="w-3 h-3" />
                       <span>Dư nợ: {formatCurrency(debtInfo.du_cuoi)}</span>
-                      {debtInfo.han_muc_no > 0 && debtInfo.du_cuoi > debtInfo.han_muc_no && (
-                        <span className="text-danger-600 ml-0.5">(Vượt HM!)</span>
-                      )}
+                      {debtInfo.han_muc_no > 0 &&
+                        debtInfo.du_cuoi > debtInfo.han_muc_no && (
+                          <span className="text-danger-600 ml-0.5">
+                            (Vượt HM!)
+                          </span>
+                        )}
                     </div>
                   </>
                 )}
@@ -817,7 +879,10 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     inputRef={maDtInputRef}
                     selectOnFocus
                     value={maDt}
-                    onChange={(val) => setMaDt(val)}
+                    onChange={(val) => {
+                      setMaDt(val);
+                      if (maDtError) setMaDtError(null);
+                    }}
                     onSelect={(opt) => handleSelectCustomer(opt.value)}
                     onBlur={() => {
                       if (maDt.trim()) {
@@ -836,8 +901,20 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     }}
                     fetcher={fetchKhachHangOptions}
                     placeholder="Mã KH..."
-                    className="font-mono font-bold text-primary-800 uppercase"
+                    className={`font-mono font-bold uppercase ${
+                      maDtError
+                        ? "text-danger-700 border-danger-400 bg-danger-50"
+                        : "text-primary-800"
+                    }`}
                   />
+                  {maDtError && (
+                    <div className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold text-danger-700">
+                      <AlertTriangle className="w-3 h-3 shrink-0" />
+                      <span className="truncate" title={maDtError}>
+                        Mã KH không hợp lệ
+                      </span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="w-28 shrink-0">
@@ -892,7 +969,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 <input
                   ref={dienGiaiInputRef}
                   className={`erp-input w-full font-medium text-neutral-800 text-xs py-0.5 ${
-                    isEditable ? "bg-white border-neutral-300" : "bg-neutral-100 cursor-default"
+                    isEditable
+                      ? "bg-white border-neutral-300"
+                      : "bg-neutral-100 cursor-default"
                   }`}
                   value={dienGiai0 || ""}
                   onChange={(e) => setDienGiai0(e.target.value)}
@@ -921,7 +1000,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
               </label>
               <div className="w-14 shrink-0">
                 <input
-                  className={disabledLookupField + " font-mono font-semibold text-center"}
+                  className={
+                    disabledLookupField + " font-mono font-semibold text-center"
+                  }
                   value={maBp || ""}
                   disabled
                   readOnly
@@ -1027,7 +1108,10 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                   Mã NX:
                 </label>
                 <input
-                  className={disabledLookupField + " w-16 text-center font-mono font-bold"}
+                  className={
+                    disabledLookupField +
+                    " w-16 text-center font-mono font-bold"
+                  }
                   value={maNx}
                   disabled
                   readOnly
@@ -1039,7 +1123,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 </label>
                 <input
                   className={`erp-input w-16 text-center font-mono font-bold text-xs py-0.5 ${
-                    isEditable ? "bg-white border-neutral-300 text-primary-900" : "bg-tertiary-50/70 border-tertiary-300 text-primary-900 cursor-default"
+                    isEditable
+                      ? "bg-white border-neutral-300 text-primary-900"
+                      : "bg-tertiary-50/70 border-tertiary-300 text-primary-900 cursor-default"
                   }`}
                   value={tk2}
                   onChange={(e) => setTk2(e.target.value)}
@@ -1063,7 +1149,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           </span>
           <span className="text-neutral-400">|</span>
           <span className="text-neutral-500 text-[11px]">
-            Đang ghi nhận: <b className="text-neutral-800">{items.length} dòng</b>
+            Đang ghi nhận:{" "}
+            <b className="text-neutral-800">{items.length} dòng</b>
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -1164,7 +1251,12 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
               </span>
               <div className="flex items-center gap-1 bg-white border border-neutral-200 rounded px-2.5 py-1 shadow-sm">
                 <span className="font-mono font-bold text-neutral-900 text-xs">
-                  {formatCurrency(totals.ttien_nt, maTte)}
+                  {/* Tiền hàng trước chiết khấu = tổng thành tiền bán (Tien_Nt9).
+                      Không dùng totals.ttien_nt (giá vốn COGS) để tránh hiển thị 0. */}
+                  {formatCurrency(
+                    items.reduce((s, it) => s + (it.tien_nt9 || 0), 0),
+                    maTte,
+                  )}
                 </span>
               </div>
             </div>
@@ -1209,7 +1301,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs">
           <div className="bg-white rounded shadow-2xl border border-neutral-300 w-96 overflow-hidden animate-in fade-in zoom-in-95">
             <div className="bg-primary-800 text-white px-3.5 py-2 flex items-center justify-between">
-              <span className="font-bold text-xs uppercase tracking-wide">F4: Chọn tài khoản</span>
+              <span className="font-bold text-xs uppercase tracking-wide">
+                F4: Chọn tài khoản
+              </span>
               <button
                 type="button"
                 onClick={() => setShowAccountPicker(false)}
@@ -1228,7 +1322,11 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 onSelect={(opt) => {
                   if (activeRowIndex >= 0 && activeRowIndex < items.length) {
                     const row = items[activeRowIndex];
-                    handleItemChange(activeRowIndex, { ...row, tk_du2: opt.value, tk_du: opt.value }, "TK_DU2");
+                    handleItemChange(
+                      activeRowIndex,
+                      { ...row, tk_du2: opt.value, tk_du: opt.value },
+                      "TK_DU2",
+                    );
                   }
                   setShowAccountPicker(false);
                 }}
@@ -1237,7 +1335,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 className="w-full text-xs"
               />
               <p className="text-[11px] text-neutral-500 italic">
-                Tài khoản chọn sẽ được áp dụng cho dòng {activeRowIndex + 1} đang đứng.
+                Tài khoản chọn sẽ được áp dụng cho dòng {activeRowIndex + 1}{" "}
+                đang đứng.
               </p>
             </div>
             <div className="bg-neutral-100 px-3 py-1.5 flex justify-end border-t border-neutral-200">

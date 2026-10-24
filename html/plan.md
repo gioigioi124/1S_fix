@@ -16,12 +16,12 @@
 >
 > **Tiến độ tổng quan:**
 >
-> | Giai đoạn | Nội dung | Trạng thái |
-> | :-- | :-- | :-- |
-> | GĐ0 | Khởi tạo dự án | ✅ 100% |
-> | GĐ1 | READ-ONLY (Xem/Lọc/In) | ✅ ~100% (chờ mẫu in `.frx`) |
-> | GĐ2 | Ghi dữ liệu (ACID) | ✅ 100% |
-> | GĐ3 | Hoàn thiện & Tối ưu | ⬜ Chưa bắt đầu |
+> | Giai đoạn | Nội dung               | Trạng thái                   |
+> | :-------- | :--------------------- | :--------------------------- |
+> | GĐ0       | Khởi tạo dự án         | ✅ 100%                      |
+> | GĐ1       | READ-ONLY (Xem/Lọc/In) | ✅ ~100% (chờ mẫu in `.frx`) |
+> | GĐ2       | Ghi dữ liệu (ACID)     | ✅ 100%                      |
+> | GĐ3       | Hoàn thiện & Tối ưu    | ⬜ Chưa bắt đầu              |
 >
 > **Quyết định thay đổi so với bản Draft:** **BỎ phần đăng nhập** (theo yêu cầu người dùng).
 > Backend `deps.py` trả user tĩnh; frontend không có màn Login. Xem §2.
@@ -117,7 +117,7 @@ Phần mềm kế toán 1S hiện chạy trên **Visual FoxPro 8.0** (client) k�
 | **Backend**           | Python **FastAPI** + `pyodbc`                                               | Tái sử dụng pattern từ `import_baoco_tool.py`                                                                                                                      |
 | **Frontend**          | **React + Vite + TypeScript**                                               | SPA hiện đại, dễ mở rộng                                                                                                                                           |
 | **UI Library**        | shadcn/ui + TailwindCSS                                                     | Component nhất quán, hỗ trợ bảng/form tốt                                                                                                                          |
-| **Xác thực**          | ~~Đăng nhập đơn giản~~ → **BỎ** (theo yêu cầu người dùng)                    | `deps.py` trả user tĩnh (`KETOAN01`); không có màn Login. Có thể bổ sung sau                                                                                        |
+| **Xác thực**          | ~~Đăng nhập đơn giản~~ → **BỎ** (theo yêu cầu người dùng)                   | `deps.py` trả user tĩnh (`KETOAN01`); không có màn Login. Có thể bổ sung sau                                                                                       |
 | **Ghi dữ liệu**       | **Giai đoạn 1: READ-ONLY** → Giai đoạn 2: ghi `VP_2014` + `KH_2014`         | An toàn dữ liệu thật                                                                                                                                               |
 | **Stored Procedures** | **Tái sử dụng tối đa** SP/Function hiện có                                  | `Save_Ct`, `ST_Check_Number`, `ST_Increase_KeyIndex`, `CtBH_Delete`, `ListReadyToPickup`, `DetailViewToPickup`, `SO_Get_Price`, `GL_Alert_ClosingAccount4Customer` |
 | **In phiếu**          | Tái tạo mẫu in trên web (HTML/CSS → PDF, in từ trình duyệt)                 | Mẫu `.frx` do người dùng cung cấp                                                                                                                                  |
@@ -211,11 +211,11 @@ sequenceDiagram
 
 #### 3.2.1. Vai trò & Bộ nhớ đệm (In-Memory Cursors) của 3 Form
 
-| Form VFP | Component Web App | Database kết nối | Cursor / State nắm giữ | Vai trò trong dây chuyền |
-| :--- | :--- | :--- | :--- | :--- |
-| **`ctbhh.scx`**<br/>*(Danh sách)* | `VoucherList.tsx`<br/>(`/sales-invoices`) | `KH_2014` (Kho)<br/>hoặc<br/>`VP_2014` (Kế toán) | • **`K_PhTemp`** (`Grid1`): Danh sách Header chứng từ trong kỳ lọc.<br/>• **`K_CtTemp`** (`Grid2`): Chi tiết dòng hàng của chứng từ đang đứng trên `Grid1`. | Màn hình điều phối trung tâm: Xem danh sách, lọc (`F9`), đánh dấu (`Space`/`Ctrl+A`), in (`F7`/`Ctrl+F7`), xóa (`F8`), mở form thêm mới (`F2`) hoặc sửa (`F3`). |
-| **`ctbhd.scx`**<br/>*(Nhập liệu)* | `VoucherForm.tsx` + `DetailGrid.tsx`<br/>(`/sales-invoices/:stt`) | `KH_2014` (Kho)<br/>hoặc<br/>`VP_2014` (Kế toán) | • **`K_PhTemp1`** (1 dòng): Bản nháp Header của phiếu đang thêm/sửa (46 cột `CtBH`).<br/>• **`K_CtTemp`** ($N$ dòng, `Grid2`): Danh sách mặt hàng của phiếu đang mở (35 cột `CtBH0`). | Form tác nghiệp chính: Nhập/sửa thông tin khách hàng (`Ma_Dt`), gọi chọn phiếu xuất kho (`cmdChonPhieuXuat`), tính toán số lượng/tiền/chiết khấu/thuế (`Calc_Loai2`, `So_Luong2`, `So_Luong3`), kiểm tra công nợ & lưu xuống DB (`Save_Ct`). |
-| **`ctbhch.scx`**<br/>*(Chọn PX kho)* | `PickupDialog.tsx`<br/>*(Modal Dialog)* | Đọc xuyên sang **`KH_2014`** từ phiên làm việc `VP_2014` | • **`K_DsPx`** (`Grid1`): Danh sách các phiếu xuất kho của khách hàng chưa lập hóa đơn.<br/>• **`K_CtPx`** (`Grid2`): Chi tiết mặt hàng của phiếu xuất đang trỏ trên `Grid1`. | Cầu nối liên thông `KH_2014` → `VP_2014`: Cho phép kế toán tích chọn (`Space`/`Ctrl+A`) một hoặc nhiều phiếu xuất kho để hút toàn bộ dòng hàng về `K_CtTemp` của `ctbhd`. |
+| Form VFP                             | Component Web App                                                 | Database kết nối                                         | Cursor / State nắm giữ                                                                                                                                                                | Vai trò trong dây chuyền                                                                                                                                                                                                                     |
+| :----------------------------------- | :---------------------------------------------------------------- | :------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ctbhh.scx`**<br/>_(Danh sách)_    | `VoucherList.tsx`<br/>(`/sales-invoices`)                         | `KH_2014` (Kho)<br/>hoặc<br/>`VP_2014` (Kế toán)         | • **`K_PhTemp`** (`Grid1`): Danh sách Header chứng từ trong kỳ lọc.<br/>• **`K_CtTemp`** (`Grid2`): Chi tiết dòng hàng của chứng từ đang đứng trên `Grid1`.                           | Màn hình điều phối trung tâm: Xem danh sách, lọc (`F9`), đánh dấu (`Space`/`Ctrl+A`), in (`F7`/`Ctrl+F7`), xóa (`F8`), mở form thêm mới (`F2`) hoặc sửa (`F3`).                                                                              |
+| **`ctbhd.scx`**<br/>_(Nhập liệu)_    | `VoucherForm.tsx` + `DetailGrid.tsx`<br/>(`/sales-invoices/:stt`) | `KH_2014` (Kho)<br/>hoặc<br/>`VP_2014` (Kế toán)         | • **`K_PhTemp1`** (1 dòng): Bản nháp Header của phiếu đang thêm/sửa (46 cột `CtBH`).<br/>• **`K_CtTemp`** ($N$ dòng, `Grid2`): Danh sách mặt hàng của phiếu đang mở (35 cột `CtBH0`). | Form tác nghiệp chính: Nhập/sửa thông tin khách hàng (`Ma_Dt`), gọi chọn phiếu xuất kho (`cmdChonPhieuXuat`), tính toán số lượng/tiền/chiết khấu/thuế (`Calc_Loai2`, `So_Luong2`, `So_Luong3`), kiểm tra công nợ & lưu xuống DB (`Save_Ct`). |
+| **`ctbhch.scx`**<br/>_(Chọn PX kho)_ | `PickupDialog.tsx`<br/>_(Modal Dialog)_                           | Đọc xuyên sang **`KH_2014`** từ phiên làm việc `VP_2014` | • **`K_DsPx`** (`Grid1`): Danh sách các phiếu xuất kho của khách hàng chưa lập hóa đơn.<br/>• **`K_CtPx`** (`Grid2`): Chi tiết mặt hàng của phiếu xuất đang trỏ trên `Grid1`.         | Cầu nối liên thông `KH_2014` → `VP_2014`: Cho phép kế toán tích chọn (`Space`/`Ctrl+A`) một hoặc nhiều phiếu xuất kho để hút toàn bộ dòng hàng về `K_CtTemp` của `ctbhd`.                                                                    |
 
 ---
 
@@ -252,6 +252,7 @@ flowchart TB
 #### 3.2.3. Giải phẫu chi tiết từng bước chuyển đổi dữ liệu
 
 ##### **Bước 1: Kho xuất hàng trên `ctbhd` trong database `KH_2014`**
+
 1. **Khởi tạo phiếu xuất kho:** Thủ kho đăng nhập vào database `KH_2014` (`UPPER(ALLTRIM(M_MA_DB)) == ALLTRIM(M_DB_KHO)`). Trên màn hình danh sách `ctbhh`, thủ kho bấm `F2` (`Command1.Click`) $\rightarrow$ mở `ctbhd` với tham số `('M', 'X1')`.
 2. **Ẩn nút Chọn phiếu xuất:** Tại `ctbhd.Init` (Block 3), do đang ở database Kho nên `THIS.cmdChonPhieuXuat.Visible = .F.`.
 3. **Nhập hàng hóa xuất kho:**
@@ -264,6 +265,7 @@ flowchart TB
    - Bấm **"Chấp nhận"** (`Cmgnhan_huy1.Command1.Click`): Hàm `=Save_Ct('M')` ghi Header vào `KH_2014.dbo.CtBH` và các dòng hàng vào `KH_2014.dbo.CtBH0` (lúc này dưới kho `Stt_PX` để trống/NULL).
 
 ##### **Bước 2: Kế toán tại `VP_2014` mở `ctbhd` từ `ctbhh` và tìm khách hàng**
+
 1. **Cơ chế Master-Detail trên `ctbhh` (`VoucherList`):**
    - Khi kế toán mở `ctbhh` trên database `VP_2014`, `Grid1` hiển thị cursor `K_PhTemp` (danh sách các chứng từ).
    - Mỗi khi con trỏ dòng trên `Grid1` thay đổi (`Grid1.AfterRowColChange`), nếu `THISFORM._Grid_Current_Row <> THIS.ActiveRow`, form gọi `=View_One_Voucher(THISFORM, K_PhTemp.Stt)` để truy vấn bảng `VP_2014.dbo.CtBH0` (WHERE `Stt = K_PhTemp.Stt`) và đổ vào cursor `K_CtTemp` hiển thị ở `Grid2` bên dưới.
@@ -293,6 +295,7 @@ flowchart TB
      - Truy vấn trực tiếp hạn mức tín dụng (`Gioi_Han`, `Toi_Han`) và công nợ hiện tại tại ngày `DATE()` qua SP `GL_Alert_ClosingAccount4Customer` (hoặc `GL_Alert_ClosingAccount4CustomerGroup`), hiển thị lên 3 nhãn `lblGioiHan`, `lblCongNo`, `lblVm` và cảnh báo nếu chạm/vượt hạn mức (Fix #1, #2, #16).
 
 ##### **Bước 3: Từ `ctbhd` mở `ctbhch` ("Chọn phiếu xuất") và tích chọn phiếu kho**
+
 1. **Kích hoạt `cmdChonPhieuXuat`:**
    - Vì kế toán đang làm việc trên `VP_2014` (`UPPER(ALLTRIM(M_MA_DB)) <> ALLTRIM(M_DB_KHO)`), nút **"Chọn phiếu xuất"** (`cmdChonPhieuXuat`, Rec 90) được hiển thị (`Visible = .T.`).
    - Khi bấm nút, sự kiện `cmdChonPhieuXuat.Click` gọi hàm thư viện:
@@ -329,6 +332,7 @@ flowchart TB
      - Bấm **"Hủy bỏ"** (`cmgNhan_huy.Command2.Click` hoặc phím `Esc`): `M.Nhan_Huy = 0`, đóng `ctbhch` và giữ nguyên `ctbhd` không thay đổi.
 
 ##### **Bước 4: Chuyển đổi dữ liệu từ `ctbhch` (`K_DsPx`/`K_CtPx`) vào `ctbhd` (`K_PhTemp1`/`K_CtTemp`)**
+
 Ngay khi `ctbhch` đóng lại với `M.Nhan_Huy = 1`, phần hậu xử lý của `ListReadyToPickup` thực hiện chuyển đổi dữ liệu sang `ctbhd`:
 
 1. **Gom dòng chi tiết từ các phiếu đã tích (`Mark = .T.`) sang `K_CtTemp`:**
@@ -336,19 +340,19 @@ Ngay khi `ctbhch` đóng lại với `M.Nhan_Huy = 1`, phần hậu xử lý c�
    - Lấy toàn bộ các dòng hàng thuộc các phiếu đó từ `KH_2014.dbo.CtBH0` (`K_CtPx`) chèn vào cursor `K_CtTemp` của form `ctbhd`.
 2. **Bảng quy tắc ánh xạ từng trường từ Kho (`K_CtPx`) sang Văn phòng (`K_CtTemp`):**
 
-| Trường đích trên `ctbhd` (`K_CtTemp`) | Nguồn từ `ctbhch` (`K_CtPx` / `KH_2014.dbo.CtBH0`) | Cơ chế biến đổi & Lưu ý kỹ thuật quan trọng |
-| :--- | :--- | :--- |
-| **`Stt`** | `K_PhTemp1.Stt` | Gán bằng khóa chính `Stt` của hóa đơn văn phòng đang mở trên `ctbhd`. |
-| **`Stt0`** | Sinh mới (`SYS(2015)` / `ST_Increase_KeyIndex`) | Mỗi dòng trên `K_CtTemp` tại VP có khóa chính `Stt0` mới độc lập. |
-| **`Stt_PX`** | **`K_DsPx.Stt`** *(Header `Stt` của phiếu kho `KH_2014.dbo.CtBH`)* | **Khóa ngoại liên kết liên Database (đã xác minh thực nghiệm 100%):** Lưu mã **`Stt` của Header phiếu xuất kho** bên `KH_2014` (ví dụ `'S1000000000014763665'`, **không phải** `Stt0` của dòng chi tiết). Trong khi đó `KH_2014.dbo.CtBH0.Stt_PX` luôn bằng `NULL` (0 bản ghi). |
-| **`Ma_Vt`, `Ten_Vt`, `Loai_Vt`** | `K_CtPx.Ma_Vt`, `Ten_Vt`, `Loai_Vt` (từ `IN_DetailReadyToPickup`) | Giữ nguyên từng dòng riêng biệt theo từng phiếu xuất kho (không gộp dòng trùng mã vật tư). SP `IN_DetailReadyToPickup` đã trả sẵn `Ten_Vt` và `Loai_Vt` (`'1'`, `'2'`, `'3'`). |
-| **`Dvt`, `Dvt_Ban`, `Ma_Kho`** | `K_CtPx.Dvt`, `Dvt_Ban`, `Ma_Kho` | Giữ nguyên ĐVT gốc, ĐVT bán và Mã kho thực xuất dưới kho. |
-| **`So_Tam`** | `K_CtPx.So_Tam` | Giữ nguyên số tấm thủ kho đã cân/đếm (với `Loai_Vt = '2'`). |
-| **`He_So8`, `He_So9`** | `K_CtPx.He_So8`, `He_So9` | Giữ nguyên hệ số quy đổi từ kho. *(Lưu ý: Trên UI `ctbhch` cột Hệ số ở vị trí 8, còn trên `ctbhd` ở vị trí 10, nhưng cùng tên trường `He_So8`)*. |
-| **`So_Luong8`, `So_Luong9`, `So_Luong`** | `K_CtPx.So_Luong8`, `So_Luong9` | Giữ nguyên số lượng bán quy đổi ($\text{So\_Tam} \times \text{He\_So8}$ với hàng Mút). |
-| **`Tk`, `Tk_Du`, `Tk_Du2`, `Tk_Du4`** | Trả sẵn từ `IN_DetailReadyToPickup` (theo `M_DmVt`) | Gán tài khoản hạch toán tại VP: `Tk = Tk_Gv` (`632`), `Tk_Du = Tk_Vt` (`1561`), `Tk_Du2 = Tk_Dt` (`5111` hoặc `Tk_HBTL`), `Tk_Du4 = Tk_Ck` (`521`). |
-| **`Gia_Nt9`, `Chiet_Khau`** | SP `SO_Get_Price` & `SO_Get_Discount` + `SO_Price_Fix` | Tự động tra bảng giá/chiết khấu VP theo `Ngay_Ct`, `Ma_Dt`, `Ma_Vt` cho từng dòng riêng biệt (và kiểm tra ngày hết hạn giá qua `CheckPriceExpiry` / `CheckDiscountExpiry`). |
-| **`Tien_Nt9`, `Tien9`, `Tien_Nt2`, `Tien2`, `Tien_Nt4`, `Tien4`** | Tính qua `Calc_Loai2` / `So_Luong2` / `So_Luong3` + `Chiet_Khau` | Tính thành tiền trước CK, tiền CK và thành tiền sau CK theo đơn giá văn phòng. |
+| Trường đích trên `ctbhd` (`K_CtTemp`)                             | Nguồn từ `ctbhch` (`K_CtPx` / `KH_2014.dbo.CtBH0`)                 | Cơ chế biến đổi & Lưu ý kỹ thuật quan trọng                                                                                                                                                                                                                                     |
+| :---------------------------------------------------------------- | :----------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`Stt`**                                                         | `K_PhTemp1.Stt`                                                    | Gán bằng khóa chính `Stt` của hóa đơn văn phòng đang mở trên `ctbhd`.                                                                                                                                                                                                           |
+| **`Stt0`**                                                        | Sinh mới (`SYS(2015)` / `ST_Increase_KeyIndex`)                    | Mỗi dòng trên `K_CtTemp` tại VP có khóa chính `Stt0` mới độc lập.                                                                                                                                                                                                               |
+| **`Stt_PX`**                                                      | **`K_DsPx.Stt`** _(Header `Stt` của phiếu kho `KH_2014.dbo.CtBH`)_ | **Khóa ngoại liên kết liên Database (đã xác minh thực nghiệm 100%):** Lưu mã **`Stt` của Header phiếu xuất kho** bên `KH_2014` (ví dụ `'S1000000000014763665'`, **không phải** `Stt0` của dòng chi tiết). Trong khi đó `KH_2014.dbo.CtBH0.Stt_PX` luôn bằng `NULL` (0 bản ghi). |
+| **`Ma_Vt`, `Ten_Vt`, `Loai_Vt`**                                  | `K_CtPx.Ma_Vt`, `Ten_Vt`, `Loai_Vt` (từ `IN_DetailReadyToPickup`)  | Giữ nguyên từng dòng riêng biệt theo từng phiếu xuất kho (không gộp dòng trùng mã vật tư). SP `IN_DetailReadyToPickup` đã trả sẵn `Ten_Vt` và `Loai_Vt` (`'1'`, `'2'`, `'3'`).                                                                                                  |
+| **`Dvt`, `Dvt_Ban`, `Ma_Kho`**                                    | `K_CtPx.Dvt`, `Dvt_Ban`, `Ma_Kho`                                  | Giữ nguyên ĐVT gốc, ĐVT bán và Mã kho thực xuất dưới kho.                                                                                                                                                                                                                       |
+| **`So_Tam`**                                                      | `K_CtPx.So_Tam`                                                    | Giữ nguyên số tấm thủ kho đã cân/đếm (với `Loai_Vt = '2'`).                                                                                                                                                                                                                     |
+| **`He_So8`, `He_So9`**                                            | `K_CtPx.He_So8`, `He_So9`                                          | Giữ nguyên hệ số quy đổi từ kho. _(Lưu ý: Trên UI `ctbhch` cột Hệ số ở vị trí 8, còn trên `ctbhd` ở vị trí 10, nhưng cùng tên trường `He_So8`)_.                                                                                                                                |
+| **`So_Luong8`, `So_Luong9`, `So_Luong`**                          | `K_CtPx.So_Luong8`, `So_Luong9`                                    | Giữ nguyên số lượng bán quy đổi ($\text{So\_Tam} \times \text{He\_So8}$ với hàng Mút).                                                                                                                                                                                          |
+| **`Tk`, `Tk_Du`, `Tk_Du2`, `Tk_Du4`**                             | Trả sẵn từ `IN_DetailReadyToPickup` (theo `M_DmVt`)                | Gán tài khoản hạch toán tại VP: `Tk = Tk_Gv` (`632`), `Tk_Du = Tk_Vt` (`1561`), `Tk_Du2 = Tk_Dt` (`5111` hoặc `Tk_HBTL`), `Tk_Du4 = Tk_Ck` (`521`).                                                                                                                             |
+| **`Gia_Nt9`, `Chiet_Khau`**                                       | SP `SO_Get_Price` & `SO_Get_Discount` + `SO_Price_Fix`             | Tự động tra bảng giá/chiết khấu VP theo `Ngay_Ct`, `Ma_Dt`, `Ma_Vt` cho từng dòng riêng biệt (và kiểm tra ngày hết hạn giá qua `CheckPriceExpiry` / `CheckDiscountExpiry`).                                                                                                     |
+| **`Tien_Nt9`, `Tien9`, `Tien_Nt2`, `Tien2`, `Tien_Nt4`, `Tien4`** | Tính qua `Calc_Loai2` / `So_Luong2` / `So_Luong3` + `Chiet_Khau`   | Tính thành tiền trước CK, tiền CK và thành tiền sau CK theo đơn giá văn phòng.                                                                                                                                                                                                  |
 
 3. **Cập nhật thông tin Header `K_PhTemp1` sau khi lấy phiếu xuất:**
    - Nếu `K_PhTemp1.Ma_Xe` đang trống, kế thừa `Ma_Xe` từ phiếu xuất kho (`K_DsPx.Ma_Xe`).
@@ -382,16 +386,16 @@ Qua kiểm tra metadata (`sys.parameters`, `sys.dm_exec_describe_first_result_se
 
 2. **Danh mục đầy đủ các Stored Procedures tham gia vào vòng đời 3 Form:**
 
-| Form VFP | Tên Stored Procedure trên SQL Server | Tham số đầu vào / đầu ra (Signature) | Kết quả trả về / Nhiệm vụ thực thi |
-| :--- | :--- | :--- | :--- |
-| **`ctbhh`**<br/>*(Danh sách)* | `VP_2014.dbo.CtBH_Get` | 20 params: `@p_Ma_DvCs`, `@p_Ngay_Loc`, `@p_Ngay1`, `@p_Ngay2`, `@p_So_Ct1`, `@p_So_Ct2`, `@p_Ma_Ct`, `@p_Ma_Tte`, `@p_Tk`, `@p_Tk_Du`, `@p_Tien1`, `@p_Tien2`, `@p_Ma_Dt`, `@p_Ma_Bp`, `@p_Ma_HD`, `@p_Ma_Nx`, `@p_Ma_Kho`, `@p_Ma_Vt`, `@p_FilterByUser`, `@p_UserName` | Trả về 35 cột Header đổ vào cursor `K_PhTemp` (`Grid1`). |
-| **`ctbhh`**<br/>*(Xem 1 phiếu)* | `VP_2014.dbo.CtBH0_Get` | `@p_Stt char(20)` | Được gọi bởi `=View_One_Voucher(THISFORM, K_PhTemp.Stt)` khi đổi dòng trên `Grid1`. Trả về 38 cột Detail đổ vào `K_CtTemp` (`Grid2`). |
-| **`ctbhh`**<br/>*(Xóa phiếu)* | `VP_2014.dbo.CtBH_Delete` | `@p_Stt char(20), @p_UserName char(16)` | Xóa hoàn toàn chứng từ trong `CtBH0`, `CtBH`, `SoCai`, `SoCaiVT` và lưu vết lịch sử xóa. |
-| **`ctbhch`**<br/>*(Danh sách PX)* | `VP_2014.dbo.IN_ListReadyToPickup` | `@p_Nh_Ct char(1), @p_Ma_Dt char(16), @p_Ngay1 datetime, @p_Ngay2 datetime` | Được gọi bởi `=ListReadyToPickup(...)` với `@p_Ngay1 = @p_Ngay2 = K_PhTemp1.Ngay_Ct`. Trả về 8 cột (`Mark`, `Chon`, `Stt`, `Ngay_Ct`, `So_Ct`, `Ma_Dt`, `Ten_Dt`, `Dia_Chi`) đổ vào `K_DsPx` (`Grid1`). |
-| **`ctbhch`**<br/>*(Chi tiết PX)* | `VP_2014.dbo.IN_DetailReadyToPickup` | `@p_Stt char(20)` | Được gọi bởi `=DetailViewToPickup(K_DsPx.Stt)`. Trả về 18 cột (`Stt`, `Stt0`, `Ma_Vt`, `Ten_Vt`, `Loai_Vt`, `Tk_Du2`, `Tk_Du`, `Tk`, `Tk_Du4`, `Dvt`, `Dvt_Ban`, `Ma_Kho`, `So_Tam`, `He_So8`, `He_So9`, `So_Luong8`, `So_Luong9`, `Gia_Tb_Tt`) đổ vào `K_CtPx` (`Grid2`). |
-| **`ctbhd`**<br/>*(Mở sửa 'S')* | `VP_2014.dbo.CtBH_One_Get`<br/>`VP_2014.dbo.CtBH0_Get` | `@p_Stt char(20)` | Được gọi bởi `=Edit_One_Voucher(THIS)` để nạp 52 cột Header vào `K_PhTemp1` và 38 cột Detail vào `K_CtTemp`. |
-| **`ctbhd`**<br/>*(Sinh khóa & Số)* | `VTSYS.dbo.ST_Increase_KeyIndex`<br/>`VTSYS.dbo.ST_Increase_Number`<br/>`VP_2014.dbo.ST_Check_Number` | • `(@p_Ma_DvCs, @p_Stt OUTPUT)`<br/>• `(@p_Ma_DvCs, @p_Ma_Ct, @p_Ngay_Ct, @p_So_Ct OUTPUT)`<br/>• `(@p_Ma_DvCs, @p_Moi_Sua, @p_Stt, @p_Ma_Ct, @p_Ngay_Ct, @p_So_Ct, @p_Check OUTPUT)` | Cấp mã `Stt` / `Stt0` (ví dụ `'S1000000000014763690'`), sinh số chứng từ `So_Ct` tự động và kiểm tra chống trùng số chứng từ. |
-| **`ctbhd`**<br/>*(Lưu `Save_Ct`)* | `VP_2014.dbo.CtBH_Save`<br/>`VP_2014.dbo.CtBH0_Delete`<br/>`VP_2014.dbo.CtBH0_Save`<br/>`VP_2014.dbo.CtBH_Post`<br/>`VP_2014.dbo.CtBH_SoCai`<br/>`VP_2014.dbo.CtBH_SoCaiVT_Save`<br/>`VTSYS.dbo.ST_Save_Number` | • `CtBH_Save` (44 params, `@p_Result OUTPUT`)<br/>• `CtBH0_Delete(@p_Stt0)`<br/>• `CtBH0_Save` (37 params, gồm `@p_Stt_PX`, `@p_Result OUTPUT`)<br/>• `CtBH_Post(@p_Kieu, @p_Stt, @p_UserName)`<br/>• `CtBH_SoCaiVT_Save(@p_Stt)` | Chuỗi SP được hàm `=Save_Ct(THISFORM._Moi_Sua)` thực thi để ghi Header `CtBH`, ghi từng dòng Detail `CtBH0`, hạch toán sổ cái tài khoản (`SoCai`), sổ cái vật tư (`SoCaiVT`) và lưu số chứng từ cuối vào `DocumentNumber`. |
+| Form VFP                           | Tên Stored Procedure trên SQL Server                                                                                                                                                                            | Tham số đầu vào / đầu ra (Signature)                                                                                                                                                                                                                                      | Kết quả trả về / Nhiệm vụ thực thi                                                                                                                                                                                                                                         |
+| :--------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ctbhh`**<br/>_(Danh sách)_      | `VP_2014.dbo.CtBH_Get`                                                                                                                                                                                          | 20 params: `@p_Ma_DvCs`, `@p_Ngay_Loc`, `@p_Ngay1`, `@p_Ngay2`, `@p_So_Ct1`, `@p_So_Ct2`, `@p_Ma_Ct`, `@p_Ma_Tte`, `@p_Tk`, `@p_Tk_Du`, `@p_Tien1`, `@p_Tien2`, `@p_Ma_Dt`, `@p_Ma_Bp`, `@p_Ma_HD`, `@p_Ma_Nx`, `@p_Ma_Kho`, `@p_Ma_Vt`, `@p_FilterByUser`, `@p_UserName` | Trả về 35 cột Header đổ vào cursor `K_PhTemp` (`Grid1`).                                                                                                                                                                                                                   |
+| **`ctbhh`**<br/>_(Xem 1 phiếu)_    | `VP_2014.dbo.CtBH0_Get`                                                                                                                                                                                         | `@p_Stt char(20)`                                                                                                                                                                                                                                                         | Được gọi bởi `=View_One_Voucher(THISFORM, K_PhTemp.Stt)` khi đổi dòng trên `Grid1`. Trả về 38 cột Detail đổ vào `K_CtTemp` (`Grid2`).                                                                                                                                      |
+| **`ctbhh`**<br/>_(Xóa phiếu)_      | `VP_2014.dbo.CtBH_Delete`                                                                                                                                                                                       | `@p_Stt char(20), @p_UserName char(16)`                                                                                                                                                                                                                                   | Xóa hoàn toàn chứng từ trong `CtBH0`, `CtBH`, `SoCai`, `SoCaiVT` và lưu vết lịch sử xóa.                                                                                                                                                                                   |
+| **`ctbhch`**<br/>_(Danh sách PX)_  | `VP_2014.dbo.IN_ListReadyToPickup`                                                                                                                                                                              | `@p_Nh_Ct char(1), @p_Ma_Dt char(16), @p_Ngay1 datetime, @p_Ngay2 datetime`                                                                                                                                                                                               | Được gọi bởi `=ListReadyToPickup(...)` với `@p_Ngay1 = @p_Ngay2 = K_PhTemp1.Ngay_Ct`. Trả về 8 cột (`Mark`, `Chon`, `Stt`, `Ngay_Ct`, `So_Ct`, `Ma_Dt`, `Ten_Dt`, `Dia_Chi`) đổ vào `K_DsPx` (`Grid1`).                                                                    |
+| **`ctbhch`**<br/>_(Chi tiết PX)_   | `VP_2014.dbo.IN_DetailReadyToPickup`                                                                                                                                                                            | `@p_Stt char(20)`                                                                                                                                                                                                                                                         | Được gọi bởi `=DetailViewToPickup(K_DsPx.Stt)`. Trả về 18 cột (`Stt`, `Stt0`, `Ma_Vt`, `Ten_Vt`, `Loai_Vt`, `Tk_Du2`, `Tk_Du`, `Tk`, `Tk_Du4`, `Dvt`, `Dvt_Ban`, `Ma_Kho`, `So_Tam`, `He_So8`, `He_So9`, `So_Luong8`, `So_Luong9`, `Gia_Tb_Tt`) đổ vào `K_CtPx` (`Grid2`). |
+| **`ctbhd`**<br/>_(Mở sửa 'S')_     | `VP_2014.dbo.CtBH_One_Get`<br/>`VP_2014.dbo.CtBH0_Get`                                                                                                                                                          | `@p_Stt char(20)`                                                                                                                                                                                                                                                         | Được gọi bởi `=Edit_One_Voucher(THIS)` để nạp 52 cột Header vào `K_PhTemp1` và 38 cột Detail vào `K_CtTemp`.                                                                                                                                                               |
+| **`ctbhd`**<br/>_(Sinh khóa & Số)_ | `VTSYS.dbo.ST_Increase_KeyIndex`<br/>`VTSYS.dbo.ST_Increase_Number`<br/>`VP_2014.dbo.ST_Check_Number`                                                                                                           | • `(@p_Ma_DvCs, @p_Stt OUTPUT)`<br/>• `(@p_Ma_DvCs, @p_Ma_Ct, @p_Ngay_Ct, @p_So_Ct OUTPUT)`<br/>• `(@p_Ma_DvCs, @p_Moi_Sua, @p_Stt, @p_Ma_Ct, @p_Ngay_Ct, @p_So_Ct, @p_Check OUTPUT)`                                                                                     | Cấp mã `Stt` / `Stt0` (ví dụ `'S1000000000014763690'`), sinh số chứng từ `So_Ct` tự động và kiểm tra chống trùng số chứng từ.                                                                                                                                              |
+| **`ctbhd`**<br/>_(Lưu `Save_Ct`)_  | `VP_2014.dbo.CtBH_Save`<br/>`VP_2014.dbo.CtBH0_Delete`<br/>`VP_2014.dbo.CtBH0_Save`<br/>`VP_2014.dbo.CtBH_Post`<br/>`VP_2014.dbo.CtBH_SoCai`<br/>`VP_2014.dbo.CtBH_SoCaiVT_Save`<br/>`VTSYS.dbo.ST_Save_Number` | • `CtBH_Save` (44 params, `@p_Result OUTPUT`)<br/>• `CtBH0_Delete(@p_Stt0)`<br/>• `CtBH0_Save` (37 params, gồm `@p_Stt_PX`, `@p_Result OUTPUT`)<br/>• `CtBH_Post(@p_Kieu, @p_Stt, @p_UserName)`<br/>• `CtBH_SoCaiVT_Save(@p_Stt)`                                         | Chuỗi SP được hàm `=Save_Ct(THISFORM._Moi_Sua)` thực thi để ghi Header `CtBH`, ghi từng dòng Detail `CtBH0`, hạch toán sổ cái tài khoản (`SoCai`), sổ cái vật tư (`SoCaiVT`) và lưu số chứng từ cuối vào `DocumentNumber`.                                                 |
 
 ---
 
@@ -406,6 +410,7 @@ Qua kiểm tra metadata (`sys.parameters`, `sys.dm_exec_describe_first_result_se
    - Mỗi dòng giữ riêng `stt_px = slip.stt` (khóa `Stt` của phiếu xuất kho `KH_2014.dbo.CtBH.Stt`), được cấp `stt0` mới khi lưu, và **tự động tra đơn giá (`SO_Get_Price` + `CheckPriceExpiry`) / chiết khấu (`SO_Get_Discount` + `CheckDiscountExpiry`)** theo bảng giá văn phòng `VP_2014`, sau đó tính thành tiền chuẩn theo `Loai_Vt` (`Calc_Loai2` cho loại 2, `So_Luong2` cho loại 1, `So_Luong3` cho loại 3).
 
 ##### **Bước 5: Lưu phiếu trên `ctbhd`, ghi xuống `CtBH` & `CtBH0`, và cập nhật lại `ctbhh`**
+
 Khi kế toán kiểm tra xong đơn giá, chiết khấu, thuế suất GTGT và bấm nút **"Chấp nhận"** (`Cmgnhan_huy1.Command1.Click` — Block 114, Rec 59):
 
 1. **Chuỗi 7 chốt chặn kiểm tra & chuẩn hóa trước khi ghi (Pre-Save Pipeline):**
@@ -452,17 +457,17 @@ Khi kế toán kiểm tra xong đơn giá, chiết khấu, thuế suất GTGT v�
 
 #### 3.2.4. Bảng ánh xạ cơ chế liên thông VFP sang Web App (`html/webapp`)
 
-| Cơ chế trong VFP (`ctbhh` / `ctbhd` / `ctbhch`) | Triển khai trên Web App (`VoucherList` / `VoucherForm` / `PickupDialog`) | Trạng thái |
-| :--- | :--- | :---: |
-| Mở `ctbhh` nạp `K_PhTemp` (`Grid1`) | `VoucherList.tsx` gọi `GET /api/vouchers?ma_ct=...&page=1` | ✅ GĐ1 |
-| Đổi dòng trên `ctbhh.Grid1` $\rightarrow$ `=View_One_Voucher(Stt)` nạp `K_CtTemp` (`Grid2`) | Click dòng trên `VoucherList.tsx` $\rightarrow$ gọi `GET /api/vouchers/{stt}` lấy `items` đổ vào `DetailGrid` (variant `list`) | ✅ GĐ1 |
-| Từ `ctbhh` bấm `F2` (Thêm) / `F3` (Sửa) mở `ctbhd` | Điều hướng `/sales-invoices/new` (`mode='M'`, kế thừa `ma_dt`, `ma_xe` từ dòng đang chọn) hoặc `/sales-invoices/:stt` (`mode='S'`) trên `VoucherForm.tsx` | 🔄 GĐ2 (Editable) |
-| Trên `ctbhd` chọn khách `Ma_Dt` $\rightarrow$ tra cứu thông tin & công nợ | `Autocomplete.tsx` (`GET /api/lookups/khach-hang?q=`) $\rightarrow$ điền `ten_dt`, `dia_chi`, `ong_ba`, `ma_bp`, `han_tt` + gọi `GET /api/debt/customer?ma_dt=` | 🔄 GĐ2 (Auto-fill) |
-| Trên `ctbhd` bấm `cmdChonPhieuXuat` $\rightarrow$ `ListReadyToPickup` mở `ctbhch` | Bấm nút **"Chọn phiếu xuất"** trên `VoucherForm.tsx` $\rightarrow$ mở `PickupDialog.tsx`, gọi `GET /api/pickup/list?ma_dt=...&ngay_ct1=...&ngay_ct2=...` | ✅ GĐ1 / 🔄 GĐ2 |
-| Trên `ctbhch.Grid1` đổi dòng $\rightarrow$ `DetailViewToPickup(Stt)` nạp `Grid2` | Click dòng trên bảng Master của `PickupDialog.tsx` $\rightarrow$ gọi `GET /api/pickup/detail/{stt}` hiển thị bảng Detail bên dưới | ✅ GĐ1 |
-| Trên `ctbhch` bấm `Space` / `Ctrl+A` / `Ctrl+U` $\rightarrow$ `Enter` ("Chấp nhận") | Hotkey `Space` / `Ctrl+A` / `Ctrl+U` tích chọn `selectedStts` $\rightarrow$ bấm `Enter` gọi `POST /api/pickup/accept` trả về danh sách dòng cho `DetailGrid.tsx` | ✅ GĐ1 / 🔄 GĐ2 |
-| Sau khi nhận dòng từ `ctbhch`: tự động tra đơn giá `SO_Get_Price` & chiết khấu `SO_Get_Discount` và tính tiền | Trong `POST /api/pickup/accept` (hoặc khi nhận dòng vào `VoucherForm`): tra cứu giá bán/CK theo `ma_dt`, `ngay_ct`, `ma_vt` và chạy `Calc_Loai2` / `So_Luong2` để ra thành tiền ngay lập tức | 🔄 GĐ2 |
-| Bấm **"Chấp nhận"** trên `ctbhd` $\rightarrow$ `Save_Ct` ghi `CtBH` & `CtBH0`, khóa phiếu kho `Stt_PX`, quay về `ctbhh` làm mới danh sách | `POST /api/vouchers` (thêm) hoặc `PUT /api/vouchers/{stt}` (sửa) trong 1 Transaction ACID $\rightarrow$ ghi `VP_2014.dbo.CtBH` & `CtBH0` (kèm `Stt_PX`), invalidate cache danh sách và quay về `VoucherList.tsx` | 🔄 GĐ2 |
+| Cơ chế trong VFP (`ctbhh` / `ctbhd` / `ctbhch`)                                                                                           | Triển khai trên Web App (`VoucherList` / `VoucherForm` / `PickupDialog`)                                                                                                                                         |     Trạng thái     |
+| :---------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------: |
+| Mở `ctbhh` nạp `K_PhTemp` (`Grid1`)                                                                                                       | `VoucherList.tsx` gọi `GET /api/vouchers?ma_ct=...&page=1`                                                                                                                                                       |       ✅ GĐ1       |
+| Đổi dòng trên `ctbhh.Grid1` $\rightarrow$ `=View_One_Voucher(Stt)` nạp `K_CtTemp` (`Grid2`)                                               | Click dòng trên `VoucherList.tsx` $\rightarrow$ gọi `GET /api/vouchers/{stt}` lấy `items` đổ vào `DetailGrid` (variant `list`)                                                                                   |       ✅ GĐ1       |
+| Từ `ctbhh` bấm `F2` (Thêm) / `F3` (Sửa) mở `ctbhd`                                                                                        | Điều hướng `/sales-invoices/new` (`mode='M'`, kế thừa `ma_dt`, `ma_xe` từ dòng đang chọn) hoặc `/sales-invoices/:stt` (`mode='S'`) trên `VoucherForm.tsx`                                                        | 🔄 GĐ2 (Editable)  |
+| Trên `ctbhd` chọn khách `Ma_Dt` $\rightarrow$ tra cứu thông tin & công nợ                                                                 | `Autocomplete.tsx` (`GET /api/lookups/khach-hang?q=`) $\rightarrow$ điền `ten_dt`, `dia_chi`, `ong_ba`, `ma_bp`, `han_tt` + gọi `GET /api/debt/customer?ma_dt=`                                                  | 🔄 GĐ2 (Auto-fill) |
+| Trên `ctbhd` bấm `cmdChonPhieuXuat` $\rightarrow$ `ListReadyToPickup` mở `ctbhch`                                                         | Bấm nút **"Chọn phiếu xuất"** trên `VoucherForm.tsx` $\rightarrow$ mở `PickupDialog.tsx`, gọi `GET /api/pickup/list?ma_dt=...&ngay_ct1=...&ngay_ct2=...`                                                         |  ✅ GĐ1 / 🔄 GĐ2   |
+| Trên `ctbhch.Grid1` đổi dòng $\rightarrow$ `DetailViewToPickup(Stt)` nạp `Grid2`                                                          | Click dòng trên bảng Master của `PickupDialog.tsx` $\rightarrow$ gọi `GET /api/pickup/detail/{stt}` hiển thị bảng Detail bên dưới                                                                                |       ✅ GĐ1       |
+| Trên `ctbhch` bấm `Space` / `Ctrl+A` / `Ctrl+U` $\rightarrow$ `Enter` ("Chấp nhận")                                                       | Hotkey `Space` / `Ctrl+A` / `Ctrl+U` tích chọn `selectedStts` $\rightarrow$ bấm `Enter` gọi `POST /api/pickup/accept` trả về danh sách dòng cho `DetailGrid.tsx`                                                 |  ✅ GĐ1 / 🔄 GĐ2   |
+| Sau khi nhận dòng từ `ctbhch`: tự động tra đơn giá `SO_Get_Price` & chiết khấu `SO_Get_Discount` và tính tiền                             | Trong `POST /api/pickup/accept` (hoặc khi nhận dòng vào `VoucherForm`): tra cứu giá bán/CK theo `ma_dt`, `ngay_ct`, `ma_vt` và chạy `Calc_Loai2` / `So_Luong2` để ra thành tiền ngay lập tức                     |       🔄 GĐ2       |
+| Bấm **"Chấp nhận"** trên `ctbhd` $\rightarrow$ `Save_Ct` ghi `CtBH` & `CtBH0`, khóa phiếu kho `Stt_PX`, quay về `ctbhh` làm mới danh sách | `POST /api/vouchers` (thêm) hoặc `PUT /api/vouchers/{stt}` (sửa) trong 1 Transaction ACID $\rightarrow$ ghi `VP_2014.dbo.CtBH` & `CtBH0` (kèm `Stt_PX`), invalidate cache danh sách và quay về `VoucherList.tsx` |       🔄 GĐ2       |
 
 ---
 
@@ -604,6 +609,10 @@ VALUES (?, ?, ?, ..., dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?), dbo.fn_U
 **Detail `dbo.CtBH0` (35 cột)** — xem chi tiết tại `html/ctbhd_to_ctbh0_mapping.md` Chương 3.
 
 > ⚠️ **QUY TẮC BẤT KHẢ XÂM PHẠM (Fix #21):** Tuyệt đối **KHÔNG** gán 4 cột giá vốn (`Gia_Nt`, `Gia`, `Tien_Nt`, `Tien`) bằng đơn giá bán (`Gia_Nt9`, `Gia9`). Các trường này do hệ thống ngầm tính khi chạy sổ giá vốn xuất kho.
+>
+> ⚠️ **MỞ RỘNG Fix #21 lên Header:** Hai cột tổng giá vốn ở Header là `TTien_Nt` và `TTien`
+> cũng **KHÔNG được ghi** khi lưu phiếu bán hàng — phải để **`NULL`**. Sổ giá vốn cuối tháng
+> sẽ tính và ghi ngược vào phiếu. Chi tiết quy tắc: xem §8.2.1.
 
 ---
 
@@ -818,13 +827,38 @@ VALUES (?, ?, ?, ..., dbo.fn_UnicodeToTCVN(?), dbo.fn_UnicodeToTCVN(?), dbo.fn_U
        Gia_Nt2  = Gia_Nt9; Gia2 = Gia9
 5. Ghi đồng bộ: So_Luong8 = So_Luong9 = So_Luong = So_Luong_Ban
    ⚠️ KHÔNG đụng Gia_Nt / Gia / Tien_Nt / Tien (giá vốn)
-6. Cộng dồn Header:
-   TTien_Nt  = SUM(Tien_Nt9);  TTien  = SUM(Tien9)
+6. Cộng dồn Header (CHỈ các cột TIỀN BÁN):
    TTien_Nt2 = SUM(Tien_Nt2);  TTien2 = SUM(Tien2)
    TTien_Nt4 = SUM(Tien_Nt4);  TTien4 = SUM(Tien4)
+   ⚠️ KHÔNG cộng dồn TTien_Nt / TTien — đây là 2 cột GIÁ VỐN (xem §8.2.1).
 7. Thuế: gọi Thue_GTGT() nếu có Ma_Thue
 8. Tổng cuối: TTien_Nt0 = TTien_Nt2 + TTien_Nt3
               TTien0    = TTien2 + TTien3
+9. Để NULL: TTien_Nt, TTien, TTien_Nt3, TTien3, TTien_Nt4, TTien4 (khi không phát sinh)
+
+#### 8.2.1. Quy tắc NULL cho `TTien_Nt` / `TTien` (GIÁ VỐN — COGS)
+
+> ⚠️ **QUY TẮC BẤT KHẢ XÂM PHẠM (bổ sung Fix #21):**
+> `TTien_Nt` (Tổng tiền Ngoại tệ **giá vốn**) và `TTien` (Tổng tiền VND **giá vốn**) là 2 cột
+> **GIÁ VỐN HÀNG BÁN (COGS)**, KHÔNG phải tiền bán.
+>
+> - Chúng **KHÔNG được tính** tại thời điểm lưu phiếu bán hàng.
+> - Chúng chỉ được **sổ giá vốn xuất kho chạy vào CUỐI THÁNG** rồi ghi ngược vào phiếu.
+> - Vì vậy khi web app lưu chứng từ: **LUÔN ghi `NULL`** cho `TTien_Nt` và `TTien`
+>   (kể cả khi `SUM(Tien_Nt9)` / `SUM(Tien9)` đã có giá trị).
+> - Đọc dữ liệu: `NULL` là **bình thường/hợp lệ**, KHÔNG phải lỗi thiếu dữ liệu.
+>   UI phải hiển thị trống (hoặc `—`), KHÔNG hiển thị `0`.
+> - Tiền bán dùng các cột khác: `TTien_Nt0`, `TTien_Nt2`, `TTien_Nt3`, `TTien_Nt4`
+>   (và bản VND tương ứng `TTien0`, `TTien2`, `TTien3`, `TTien4`).
+>
+> **Bằng chứng dữ liệu VFP (golden reference):** trong 800 phiếu `CtBH` mới nhất,
+> `TTien_Nt` NULL ở 700/800 phiếu; phiếu `HD7145-2` (VFP chuẩn) có `TTien_Nt = NULL`
+> trong khi `TTien_Nt0 = TTien_Nt2 = 920000`. Ngược lại phiếu `HD7145-1` do web app ghi
+> đã điền `TTien_Nt = 920000` → **sai**, cần sửa logic ghi.
+>
+> **Hệ quả khi sửa:** các chỗ đang dùng `ISNULL(SUM(h.TTien_Nt), 0)` để hiển thị tổng tiền
+> phải chuyển sang `TTien_Nt0` (tiền bán), tránh hiển thị 0 gây hiểu nhầm là "chưa có giá vốn".
+> Không vá dữ liệu cũ — các phiếu đã ghi sai do người dùng tự xử lý.
 ```
 
 ### 8.3. Công thức thuế GTGT
@@ -946,16 +980,16 @@ def save_voucher(data, mode):  # mode = 'M' (thêm) | 'S' (sửa)
 
 #### B. Consistency (Tính nhất quán) — Dữ liệu luôn hợp lệ
 
-| Quy tắc                             | Chi tiết                                                                                                       |
-| :---------------------------------- | :------------------------------------------------------------------------------------------------------------- |
-| **Validate trước khi ghi**          | Kiểm tra `Ma_Dt`, `Ma_Nx` bắt buộc; `Ngay_Ct > M_Ngay_Kt_Ht` (khóa sổ); công nợ không vượt `Gioi_Han`          |
-| **Đồng bộ Header ⟷ Detail**         | `TTien_Nt2 = SUM(CtBH0.Tien_Nt2)`, `TTien_Nt = SUM(Tien_Nt9)`, `TTien_Nt4 = SUM(Tien_Nt4)`… **phải khớp 100%** |
-| **Đẳng thức tổng thanh toán**       | `TTien_Nt0 = TTien_Nt2 + TTien_Nt3` và `TTien0 = TTien2 + TTien3` (Fix #10)                                    |
-| **Ràng buộc khóa ngoại**            | `Ma_Vt` ∈ `DmVt`, `Ma_Dt` ∈ `DmDt`, `Ma_Kho` ∈ `DmKho`, `Ma_Tte` ∈ `DmTte`                                     |
-| **Bảo toàn giá vốn**                | **KHÔNG** ghi `Gia_Nt/Gia/Tien_Nt/Tien` từ giá bán (Fix #21)                                                   |
-| **Chiết khấu hợp lệ**               | `0 ≤ Chiet_Khau ≤ 99`; khi `= 0` phải chuẩn hóa `Tien_Nt4 = 0`, `Tien_Nt2 = Tien_Nt9` (Fix #5, #17)            |
-| **Không ghi NULL vào cột NOT NULL** | `Stt`, `Ma_DvCs`, `Ma_Ct`, `Nh_Ct`, `Ma_Tte`, `Ty_Gia`, `Ngay_Ps`, `Ngay_Ct`, `Ma_Dt`                          |
-| **Mã hóa thống nhất**               | Ghi text qua `fn_UnicodeToTCVN`, đảm bảo round-trip khớp                                                       |
+| Quy tắc                             | Chi tiết                                                                                                                                                         |
+| :---------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Validate trước khi ghi**          | Kiểm tra `Ma_Dt`, `Ma_Nx` bắt buộc; `Ngay_Ct > M_Ngay_Kt_Ht` (khóa sổ); công nợ không vượt `Gioi_Han`                                                            |
+| **Đồng bộ Header ⟷ Detail**         | `TTien_Nt2 = SUM(CtBH0.Tien_Nt2)`, `TTien_Nt4 = SUM(CtBH0.Tien_Nt4)`… **phải khớp 100%**. Riêng `TTien_Nt`/`TTien` là giá vốn → **luôn `NULL`** khi lưu (§8.2.1) |
+| **Đẳng thức tổng thanh toán**       | `TTien_Nt0 = TTien_Nt2 + TTien_Nt3` và `TTien0 = TTien2 + TTien3` (Fix #10)                                                                                      |
+| **Ràng buộc khóa ngoại**            | `Ma_Vt` ∈ `DmVt`, `Ma_Dt` ∈ `DmDt`, `Ma_Kho` ∈ `DmKho`, `Ma_Tte` ∈ `DmTte`                                                                                       |
+| **Bảo toàn giá vốn**                | **KHÔNG** ghi `Gia_Nt/Gia/Tien_Nt/Tien` từ giá bán (Fix #21). Header: `TTien_Nt`/`TTien` để **`NULL`** (§8.2.1)                                                  |
+| **Chiết khấu hợp lệ**               | `0 ≤ Chiet_Khau ≤ 99`; khi `= 0` phải chuẩn hóa `Tien_Nt4 = 0`, `Tien_Nt2 = Tien_Nt9` (Fix #5, #17)                                                              |
+| **Không ghi NULL vào cột NOT NULL** | `Stt`, `Ma_DvCs`, `Ma_Ct`, `Nh_Ct`, `Ma_Tte`, `Ty_Gia`, `Ngay_Ps`, `Ngay_Ct`, `Ma_Dt`                                                                            |
+| **Mã hóa thống nhất**               | Ghi text qua `fn_UnicodeToTCVN`, đảm bảo round-trip khớp                                                                                                         |
 
 #### C. Isolation (Tính cô lập) — Chống tranh chấp đa người dùng
 
@@ -1089,7 +1123,8 @@ Hệ thống phục vụ nhiều kế toán trên LAN, danh mục `DmVt`/`DmDt` 
 - [x] **Chuẩn hóa `pickup_repo.py` & `pickup_service.py` theo §3.2.4:**
   - Lọc phiếu xuất kho đúng theo `ma_dt` và `ngay_ct1 = ngay_ct2 = ngay_ct` của phiếu đang nhập (dùng SP `VP_2014.dbo.IN_ListReadyToPickup` & `IN_DetailReadyToPickup` hoặc đối chiếu `NOT EXISTS (SELECT 1 FROM VP_2014.dbo.CtBH0 vp WHERE vp.Stt_PX = kh.Stt)`).
   - Trong `POST /api/pickup/accept`: Giữ nguyên từng dòng riêng biệt theo từng phiếu xuất kho, gán `stt_px = slip.stt` (`KH_2014.dbo.CtBH.Stt`), tự động tra giá bán (`SO_Get_Price` + `CheckPriceExpiry`) & chiết khấu (`SO_Get_Discount` + `CheckDiscountExpiry`) và tính thành tiền theo `loai_vt`.
-- [x] API `POST /api/vouchers` (tạo mới chứng từ vào `VP_2014`) — dùng chuỗi SP `CtBH_Save` + `CtBH0_Save` + `CtBH_Post` + `CtBH_SoCaiVT_Save` + `ST_Save_Number`
+- [x] API `POST /api/vouchers` (tạo mới chứng từ vào `VP_2014`) — dùng chuỗi SP `CtBH_Save` + `CtBH0_Save` + `CtBH_Post` + **`CtBH_SoCai`** + `CtBH_SoCaiVT_Save` + `ST_Save_Number`
+  > ⚠️ `CtBH_SoCai` (26 params) là SP **ghi `dbo.SoCai`** — bút toán doanh thu Dr `Tk2` (1311) / Cr `Tk_Du2` (5112), `Tien = TTien_Nt2`, `Ma_Dt_No = Ma_Dt`, `Stt_Bt='2'`. **`CtBH_Post` KHÔNG ghi SoCai.** Thiếu bước này → phiếu không vào công nợ khách hàng (`debt_repo` đọc `dbo.SoCai`). Chế độ Sửa phải `DELETE SoCai` trước khi post lại (SP không tự dedup).
 - [x] API `PUT /api/vouchers/{stt}` (sửa chứng từ trên `VP_2014`) — dùng `CtBH_Save('S')` + `CtBH0_Delete` + `CtBH0_Save`
 - [x] API `DELETE /api/vouchers/{stt}` (xóa chứng từ trên `VP_2014`) — dùng `VP_2014.dbo.CtBH_Delete(@p_Stt, @p_UserName)`
 - [x] API `POST /api/vouchers/check-number` (`VP_2014.dbo.ST_Check_Number` + tự tăng số `ST_Increase_Number`)
@@ -1152,6 +1187,7 @@ Hệ thống phục vụ nhiều kế toán trên LAN, danh mục `DmVt`/`DmDt` 
 - [x] Giai đoạn 1: xác nhận **không có** câu lệnh INSERT/UPDATE/DELETE nào chạy
 - [x] Giai đoạn 2: mọi thao tác ghi đều trong Transaction, rollback khi lỗi
 - [x] Không ghi đè 4 cột giá vốn (`Gia_Nt`, `Gia`, `Tien_Nt`, `Tien`)
+- [ ] Header `TTien_Nt` / `TTien` ghi `NULL` khi lưu (giá vốn chờ sổ cuối tháng — §8.2.1)
 
 ### 10.4. Kiểm thử hotkey (BẮT BUỘC khớp VFP)
 
@@ -1207,16 +1243,16 @@ Hệ thống phục vụ nhiều kế toán trên LAN, danh mục `DmVt`/`DmDt` 
 
 ### 11.1. Rủi ro kỹ thuật
 
-|  #  | Rủi ro                                 | Mức độ | Giải pháp                                                       |
-| :-: | :------------------------------------- | :----: | :-------------------------------------------------------------- |
-| R1  | Ghi sai bảng mã TCVN3/Unicode          | 🔴 Cao | Test round-trip kỹ, dùng đúng 2 hàm SQL                         |
-| R2  | Ghi đè giá vốn bằng giá bán (Fix #21)  | 🔴 Cao | Không bao giờ gán `Gia_Nt=Gia_Nt9`                              |
-| R3  | Sai số lượng hàng Mút (nhảy về số tấm) | 🔴 Cao | Mirror chính xác `Calc_Loai2`, không gọi `So_Luong2` cho loại 2 |
-| R4  | Trùng số chứng từ khi nhiều người dùng | 🟡 TB  | Dùng `ST_Check_Number` + transaction                            |
-| R5  | Trừ kép chiết khấu (Fix #10)           | 🟡 TB  | `TTien_Nt0 = TTien_Nt2 + TTien_Nt3`                             |
-| R6  | Xóa nhầm CK hóa đơn USD (Fix #17)      | 🟡 TB  | Bọc điều kiện `Ma_Tte='VND'`                                    |
-| R7  | Mất kết nối SQL khi đang ghi           | 🟡 TB  | Transaction + retry + rollback                                  |
-| R8  | Lộ thông tin kết nối DB                | 🟡 TB  | Dùng `.env`, không commit                                       |
+|  #  | Rủi ro                                 | Mức độ | Giải pháp                                                                       |
+| :-: | :------------------------------------- | :----: | :------------------------------------------------------------------------------ |
+| R1  | Ghi sai bảng mã TCVN3/Unicode          | 🔴 Cao | Test round-trip kỹ, dùng đúng 2 hàm SQL                                         |
+| R2  | Ghi đè giá vốn bằng giá bán (Fix #21)  | 🔴 Cao | Không bao giờ gán `Gia_Nt=Gia_Nt9`; Header `TTien_Nt`/`TTien` = `NULL` (§8.2.1) |
+| R3  | Sai số lượng hàng Mút (nhảy về số tấm) | 🔴 Cao | Mirror chính xác `Calc_Loai2`, không gọi `So_Luong2` cho loại 2                 |
+| R4  | Trùng số chứng từ khi nhiều người dùng | 🟡 TB  | Dùng `ST_Check_Number` + transaction                                            |
+| R5  | Trừ kép chiết khấu (Fix #10)           | 🟡 TB  | `TTien_Nt0 = TTien_Nt2 + TTien_Nt3`                                             |
+| R6  | Xóa nhầm CK hóa đơn USD (Fix #17)      | 🟡 TB  | Bọc điều kiện `Ma_Tte='VND'`                                                    |
+| R7  | Mất kết nối SQL khi đang ghi           | 🟡 TB  | Transaction + retry + rollback                                                  |
+| R8  | Lộ thông tin kết nối DB                | 🟡 TB  | Dùng `.env`, không commit                                                       |
 
 ### 11.2. Nguyên tắc bất di bất dịch
 
@@ -1224,7 +1260,7 @@ Hệ thống phục vụ nhiều kế toán trên LAN, danh mục `DmVt`/`DmDt` 
 2. **Không sửa cấu trúc bảng SQL** hiện có.
 3. **Không can thiệp file `.scx/.sct/.fxp`** của VFP.
 4. **Mọi trường text** phải qua `fn_TCVNToUnicode` / `fn_UnicodeToTCVN`.
-5. **Không đụng 4 cột giá vốn** (`Gia_Nt`, `Gia`, `Tien_Nt`, `Tien`).
+5. **Không đụng 4 cột giá vốn** (`Gia_Nt`, `Gia`, `Tien_Nt`, `Tien`). Ở Header, `TTien_Nt` và `TTien` cũng là giá vốn → **luôn ghi `NULL`** khi lưu phiếu; sổ giá vốn cuối tháng mới điền (§8.2.1).
 6. **Mọi thao tác ghi** phải trong Transaction có rollback (**ACID** — xem §8.8).
 7. **File tạm** đặt trong `scratch/`, dọn sạch sau khi xong.
 8. **Hotkey phải giống hệt VFP** — dùng đúng `F2/F3/F4/F6/F7/F8/F9`, `Shift+F7`, `Ctrl+F7`, `Ctrl+F2`, `Ctrl+F3`, `Ctrl+A`, `Ctrl+U`, `Ctrl+Home`, `Ctrl+End`, `Space`, `Enter`, `Esc`. Không tự ý đổi tổ hợp phím.
@@ -1302,20 +1338,20 @@ html/webapp/
 
 ### A.2. API đã triển khai
 
-| Method | Endpoint | Trạng thái |
-| :-- | :-- | :-- |
-| `GET` | `/api/health` | ✅ |
-| `GET` | `/api/vouchers` | ✅ |
-| `GET` | `/api/vouchers/{stt}` | ✅ |
-| `POST` | `/api/vouchers/calc` | ✅ |
-| `GET` | `/api/pickup/list` | ✅ |
-| `GET` | `/api/pickup/detail/{stt}` | ✅ |
-| `POST` | `/api/pickup/accept` | ✅ |
-| `GET` | `/api/lookups/*` (10 endpoint) | ✅ |
-| `GET` | `/api/debt/customer` | ✅ |
-| `GET` | `/api/debt/detail/{stt}` | ✅ |
-| `GET` | `/api/print/{stt}` | ✅ |
-| `POST` | `/api/auth/login` | ❌ BỎ (không đăng nhập) |
+| Method | Endpoint                       | Trạng thái              |
+| :----- | :----------------------------- | :---------------------- |
+| `GET`  | `/api/health`                  | ✅                      |
+| `GET`  | `/api/vouchers`                | ✅                      |
+| `GET`  | `/api/vouchers/{stt}`          | ✅                      |
+| `POST` | `/api/vouchers/calc`           | ✅                      |
+| `GET`  | `/api/pickup/list`             | ✅                      |
+| `GET`  | `/api/pickup/detail/{stt}`     | ✅                      |
+| `POST` | `/api/pickup/accept`           | ✅                      |
+| `GET`  | `/api/lookups/*` (10 endpoint) | ✅                      |
+| `GET`  | `/api/debt/customer`           | ✅                      |
+| `GET`  | `/api/debt/detail/{stt}`       | ✅                      |
+| `GET`  | `/api/print/{stt}`             | ✅                      |
+| `POST` | `/api/auth/login`              | ❌ BỎ (không đăng nhập) |
 
 ### A.3. Hotkey đã wire (khớp VFP)
 

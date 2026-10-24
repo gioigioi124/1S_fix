@@ -70,7 +70,8 @@ class PickupService:
                 so_luong9 = float(it.so_luong9 or 0.0)
 
                 # 1. Determine sales quantity based on loai_vt
-                if loai_vt == "2":
+                #    Loai_Vt '2' (Mút xốp) và '4' dùng cùng quy cách So_Tam * He_So8
+                if loai_vt in ("2", "4"):
                     so_luong_ban = round_amount(so_tam * he_so8, 2)
                     so_luong8 = so_luong_ban
                     so_luong9 = so_luong_ban
@@ -121,10 +122,10 @@ class PickupService:
                     stt0_px=it.stt0,
                     stt0=None,
                     stt=None,
-                    tk="632",
-                    tk_du="1561",
-                    tk_du2="5111",
-                    tk_du4="521",
+                    tk=it.tk_gv or "632",
+                    tk_du=it.tk_vt or "1561",
+                    tk_du2=it.tk_dt or "5111",
+                    tk_du4=it.tk_ck or "521",
                     ma_kho=it.ma_kho or "",
                     ma_vt=it.ma_vt,
                     ten_vt=it.ten_vt or "",

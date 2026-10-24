@@ -226,7 +226,12 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
                   Cộng tiền hàng:
                 </td>
                 <td className="border border-slate-400 px-2 py-1 text-right font-mono font-bold">
-                  {formatCurrency(header.ttien_nt, currency)}
+                  {/* Tiền hàng trước CK = TTien_Nt2 (sau CK) + TTien_Nt4 (CK).
+                      KHÔNG dùng TTien_Nt vì đây là cột GIÁ VỐN (COGS), luôn NULL khi lưu. */}
+                  {formatCurrency(
+                    (header.ttien_nt2 || 0) + (header.ttien_nt4 || 0),
+                    currency,
+                  )}
                 </td>
               </tr>
               {header.ttien_nt4 > 0 && (
