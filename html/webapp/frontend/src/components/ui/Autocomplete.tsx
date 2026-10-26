@@ -31,6 +31,15 @@ interface AutocompleteProps {
   selectOnFocus?: boolean;
   /** Tự động focus khi mount */
   autoFocus?: boolean;
+  /**
+   * Chỉ mở dropdown khi người dùng GÕ (giá trị thay đổi), KHÔNG mở khi click/focus.
+   * Dùng cho ô Mã khách hàng / Mã hàng hóa theo quy tắc VFP.
+   */
+  openOnTypeOnly?: boolean;
+  /** Thời gian debounce trước khi gọi fetcher (ms). Mặc định 250. */
+  debounceMs?: number;
+  /** Số kết quả tối đa hiển thị. Mặc định 20. */
+  maxResults?: number;
 }
 
 /**
@@ -56,6 +65,9 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   inputRef: externalInputRef,
   selectOnFocus = false,
   autoFocus = false,
+  openOnTypeOnly = false,
+  debounceMs = 250,
+  maxResults = 20,
 }) => {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<AutocompleteOption[]>([]);
@@ -75,7 +87,9 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
     if (typeof externalInputRef === "function") {
       externalInputRef(el);
     } else if (externalInputRef && typeof externalInputRef === "object") {
-      (externalInputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+      (
+        externalInputRef as React.MutableRefObject<HTMLInputElement | null>
+      ).current = el;
     }
   };
 
@@ -104,7 +118,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
       try {
         const opts = await fetcher(q);
         if (id === reqIdRef.current) {
-          setOptions(opts.slice(0, 20));
+          setOptions(opts.slice(0, maxResults));
           // Mặc định highlight dòng đầu tiên khi có danh sách gợi ý nhưng KHÔNG tự điền vào input
           setHighlight(opts.length > 0 ? 0 : -1);
         }
@@ -113,9 +127,9 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
       } finally {
         if (id === reqIdRef.current) setLoading(false);
       }
-    }, 250);
+    }, debounceMs);
     return () => clearTimeout(timer);
-  }, [value, open, fetcher, minChars]);
+  }, [value, open, fetcher, minChars, debounceMs, maxResults]);
 
   // Đóng dropdown khi click ra ngoài
   useEffect(() => {
@@ -151,7 +165,12 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
       return;
     }
     if (e.key === "Enter") {
-      if (open && options.length > 0 && highlight >= 0 && highlight < options.length) {
+      if (
+        open &&
+        options.length > 0 &&
+        highlight >= 0 &&
+        highlight < options.length
+      ) {
         e.preventDefault();
         choose(options[highlight]);
       } else {
@@ -188,14 +207,20 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
           autoFocus={autoFocus}
           placeholder={placeholder}
           onChange={(e) => {
-            onChange(e.target.value);
-            if (!open) {
+            const v = e.target.value;
+            onChange(v);
+            if (openOnTypeOnly) {
+              // Chỉ mở khi có chữ do người dùng gõ/đổi; xóa hết ký tự thì đóng.
+              setOpen(v.trim().length > 0);
+            } else if (!open) {
               setOpen(true);
             }
             updateDropdownPosition();
           }}
           onFocus={(e) => {
-            setOpen(true);
+            if (!openOnTypeOnly) {
+              setOpen(true);
+            }
             updateDropdownPosition();
             if (selectOnFocus) {
               const target = e.currentTarget;

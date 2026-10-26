@@ -29,22 +29,22 @@ class DebtRepository:
             WHERE Ma_Dt = ?
         """
 
-        # Debit leg (TK 131 nợ): Tk_No LIKE '131%' against this customer
+        # Debit leg (TK 131 nợ): Tk_No LIKE '131%' against this customer, đến ngày hiện tại
         debit_sql = f"""
             SELECT
                 ISNULL(SUM(Tien), 0)    AS ps_no,
                 ISNULL(SUM(Tien_Nt), 0) AS ps_no_nt
             FROM {self.vp_db}.dbo.SoCai WITH (NOLOCK)
-            WHERE Tk_No LIKE ? AND Ma_Dt_No = ?
+            WHERE Tk_No LIKE ? AND Ma_Dt_No = ? AND Ngay_Ct <= ?
         """
 
-        # Credit leg (TK 131 có): Tk_Co LIKE '131%' against this customer
+        # Credit leg (TK 131 có): Tk_Co LIKE '131%' against this customer, đến ngày hiện tại
         credit_sql = f"""
             SELECT
                 ISNULL(SUM(Tien), 0)    AS ps_co,
                 ISNULL(SUM(Tien_Nt), 0) AS ps_co_nt
             FROM {self.vp_db}.dbo.SoCai WITH (NOLOCK)
-            WHERE Tk_Co LIKE ? AND Ma_Dt_Co = ?
+            WHERE Tk_Co LIKE ? AND Ma_Dt_Co = ? AND Ngay_Ct <= ?
         """
 
         ten_dt = ""
@@ -68,13 +68,16 @@ class DebtRepository:
         except Exception as e:
             logger.warning(f"Error querying DmDt for debt limit: {e}")
 
-        # Try calling standard SP GL_Alert_ClosingAccount4Customer (realtime balance at current date)
+        # Try calling standard SP GL_Alert_ClosingAccount4Customer (realtime balance at current date).
+        # NOTE: Mọi EXEC SP PHẢI có SET NOCOUNT ON; nếu không pyodbc sẽ ném
+        # "No results. Previous SQL was not a query" và rơi vào nhánh fallback sai.
         sp_success = False
         try:
             with get_db_cursor(self.vp_db) as cur:
                 import datetime
                 today_str = datetime.date.today().strftime("%Y-%m-%d")
                 sp_sql = f"""
+                    SET NOCOUNT ON;
                     DECLARE @p_Ten_Tk nvarchar(64), @p_Ten_Tk_E nvarchar(64), @p_Ten_Dt nvarchar(64), @p_Du_No numeric(18,2), @p_Du_Co numeric(18,2);
                     EXEC {self.vp_db}.dbo.GL_Alert_ClosingAccount4Customer
                         @p_Ma_Dvcs='S1',
@@ -87,7 +90,7 @@ class DebtRepository:
                         @p_Ten_Dt=@p_Ten_Dt OUTPUT,
                         @p_Du_No=@p_Du_No OUTPUT,
                         @p_Du_Co=@p_Du_Co OUTPUT;
-                    SELECT @p_Du_No, @p_Du_Co, @p_Ten_Dt;
+                    SELECT @p_Du_No AS Du_No, @p_Du_Co AS Du_Co, @p_Ten_Dt AS Ten_Dt;
                 """
                 cur.execute(sp_sql, [today_str, tk or "131", ma_dt])
                 row = cur.fetchone()
@@ -104,15 +107,18 @@ class DebtRepository:
             logger.warning(f"Error calling GL_Alert_ClosingAccount4Customer: {e}")
 
         if not sp_success:
+            # Fallback: cộng sổ cái TK 131 ĐẾN NGÀY HIỆN TẠI (không lấy toàn bộ lịch sử).
             try:
+                import datetime
+                today_str = datetime.date.today().strftime("%Y-%m-%d")
                 with get_db_cursor(self.vp_db) as cur:
-                    cur.execute(debit_sql, [tk_param, ma_dt])
+                    cur.execute(debit_sql, [tk_param, ma_dt, today_str])
                     r = cur.fetchone()
                     if r:
                         ps_no = float(r[0] or 0.0)
                         ps_no_nt = float(r[1] or 0.0)
 
-                    cur.execute(credit_sql, [tk_param, ma_dt])
+                    cur.execute(credit_sql, [tk_param, ma_dt, today_str])
                     r = cur.fetchone()
                     if r:
                         ps_co = float(r[0] or 0.0)

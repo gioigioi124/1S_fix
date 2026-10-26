@@ -9,11 +9,11 @@ Ràng buộc:
 
 ## 1. Tổng quan
 
-| Đối tượng             | Quy mô **thật (đã đo)**                                                | Cách làm                                                                                                                   | Độ tươi                              |
-| --------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| Khách hàng            | **5.199 dòng** (`VTSYS.dbo.DmDt`, PK `DTID`)                           | Tải hết vào RAM trình duyệt, lọc bằng `includes`                                                                           | Làm mới 5 phút/lần hoặc khi thêm/sửa |
-| Hàng hóa (tìm khi gõ) | **36.995 dòng** (`VTSYS.dbo.DmVt`, PK `VTID`)                          | Index gọn (id, mã, tên) trong RAM trình duyệt (Web Worker) + IndexedDB; FastAPI giữ bản chụp, tự so sánh và tự cấp version | 30-60 giây                           |
-| Giá hàng hóa          | **KHÔNG có bảng giá — là Stored Procedure** (mã hóa `WITH ENCRYPTION`) | Gọi `VP_2014.dbo.SO_Get_Price` / `SO_Get_Discount` theo mã khi cần, không đưa vào index                                    | Lấy tại thời điểm cần                |
+| Đối tượng             | Quy mô **thật (đã đo)**                                 | Cách làm                                                                                                                   | Độ tươi                              |
+| --------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Khách hàng            | **5.199 dòng** (`VTSYS.dbo.DmDt`, PK `DTID`)            | Tải hết vào RAM trình duyệt, lọc bằng `includes`                                                                           | Làm mới 5 phút/lần hoặc khi thêm/sửa |
+| Hàng hóa (tìm khi gõ) | **36.995 dòng** (`VTSYS.dbo.DmVt`, PK `VTID`)           | Index gọn (id, mã, tên) trong RAM trình duyệt (Web Worker) + IndexedDB; FastAPI giữ bản chụp, tự so sánh và tự cấp version | 30-60 giây                           |
+| Giá hàng hóa          | **Bảng giá `VP_2014.dbo.BG` (header) + `BG0` (detail)** | Đọc trực tiếp `BG`/`BG0` theo `Ma_Dt`/`Ma_Vm` + `Ngay_Ct`, chọn bảng giá mới nhất còn hiệu lực; không đưa vào index        | Lấy tại thời điểm cần                |
 
 Nguyên tắc chung:
 
@@ -332,13 +332,69 @@ Gõ mã chính xác rồi Enter: nếu không có trong index thì gọi `GET /a
 
 ---
 
-## 4. Giá hàng hóa trong grid phiếu bán
+## 4. Giá hàng hóa trong grid phiếu bán — đọc trực tiếp bảng giá `BG`/`BG0`
 
 Mã hàng do form trung gian truyền xuống nên đây là **tra cứu chính xác theo mã**, không cần tìm mờ.
 
-- **Mặc định:** khi form trung gian truyền danh sách mã, gọi **một** request `POST /api/prices/batch` với danh sách mã; backend gọi `VP_2014.dbo.SO_Get_Price` cho từng mã (không có bảng giá để `IN (...)`). Trong LAN khoảng 10-30 ms/dòng, gộp lại cảm giác tức thì.
-- **Nếu muốn mượt tuyệt đối:** cache kết quả giá đã tra vào `Map` (`ma_vt → gia, dvt`) ở client (lưu IndexedDB, làm mới 5-10 phút), `giaMap.get(ma)` mất dưới 1 ms. Mã thiếu thì gọi `GET /api/prices/{ma}`.
-- Nếu giá phụ thuộc khách hàng, nhóm giá, độ dày hoặc đơn vị tính: truyền đủ tham số cho SP (`SO_Get_Price`, `SO_Get_PriceByThickness`, `SO_Get_Discount`) và đưa các khóa đó vào key cache (`ma_vt|nhom_gia`).
+### 4.1. Nguồn dữ liệu: `VP_2014.dbo.BG` + `BG0`
+
+Bảng giá văn phòng nằm ở **`VP_2014`** (không phải `VTSYS`):
+
+| Bảng              | Vai trò                                | Cột chính                                                                                                                                                                       |
+| ----------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VP_2014.dbo.BG`  | Header — một dòng cho mỗi đợt bảng giá | `Stt` (PK), `Ma_DvCs`, `Ngay_Ct`, `So_Ct`, `Ma_Dt` char(16) NULL, `Ma_Vm` char(8) NULL, `Ma_Tte`, `Ty_Gia`, `Ngay_Ct1` NULL, `Ngay_Ct2` NULL, `UserName`, `Confirmed`, `Closed` |
+| `VP_2014.dbo.BG0` | Detail — một dòng cho mỗi mặt hàng     | `Stt0` (PK), `Stt` (FK → `BG.Stt`), `Ma_Vt` char(16), `Dvt` varchar(8), `Gia` numeric, `CK` numeric                                                                             |
+
+Quy tắc nghiệp vụ (đã kiểm chứng từ dữ liệu thật + `a_import_python_app.md`):
+
+- **`Ma_Dt` và `Ma_Vm` loại trừ lẫn nhau**: một đợt bảng giá áp cho **một khách hàng** HOẶC **một khu vực**, không bao giờ cả hai.
+- `Ma_Vm` của khách lấy từ **`VTSYS.dbo.DmDt.Ma_Vm`** (liên kết khách hàng ↔ khu vực; danh mục khu vực là `VTSYS.dbo.DmVm`).
+- `Ngay_Ct1`/`Ngay_Ct2` = ngày bắt đầu/kết thúc hiệu lực; `Ngay_Ct2 = NULL` = vô hạn.
+- `Gia` = đơn giá bán chưa chiết khấu; `CK` = tỷ lệ chiết khấu %.
+
+> ⚠️ **Sửa lại thông tin cũ:** trước đây tài liệu ghi "KHÔNG có bảng giá — chỉ có SP mã hóa". Thực tế **`BG`/`BG0` là bảng giá vật lý**; các SP `SO_Get_Price`/`SO_Get_Discount` (mã hóa `WITH ENCRYPTION`) chỉ là lớp đọc `BG`/`BG0` bên trong. Webapp **đọc trực tiếp `BG`/`BG0`** để kiểm soát và tài liệu hóa được logic.
+
+### 4.2. Thuật toán chọn bảng giá (khớp VFP `SO_Get_Price` + `SO_Price_Fix`)
+
+VFP gọi `SO_Get_Price` rồi lọc qua `CheckPriceExpiry`/`CheckDiscountExpiry` (trong `SO_Price_Fix.FXP`). Webapp tái hiện đúng thứ tự:
+
+1. Chỉ xét các đợt bảng giá có **`Ngay_Ct <= ngay_ct`** (không lấy bảng giá tương lai).
+2. Lọc theo đối tượng áp dụng: **khớp khách hàng** (`RTRIM(BG.Ma_Dt) = ma_dt`) **HOẶC khớp khu vực** (`BG.Ma_Dt` rỗng và `RTRIM(BG.Ma_Vm) = DmDt.Ma_Vm`).
+3. Ưu tiên **khách hàng > khu vực**; trong cùng mức ưu tiên lấy **`Ngay_Ct` mới nhất** (tie-break `Stt` DESC).
+4. Nếu bảng giá đã **hết hiệu lực** (`Ngay_Ct2` khác NULL và `Ngay_Ct > Ngay_Ct2`) → **ép `Gia = 0`, `CK = 0`** (giống `CheckPriceExpiry`).
+
+Câu SQL gom cho nhiều mã (một lượt):
+
+```sql
+SELECT RTRIM(b0.Ma_Vt) AS Ma_Vt, b0.Gia, b0.CK,
+       b.Ma_Dt, b.Ma_Vm, b.Ngay_Ct, b.Ngay_Ct2, b.Stt
+FROM VP_2014.dbo.BG  b  WITH (NOLOCK)
+JOIN VP_2014.dbo.BG0 b0 WITH (NOLOCK) ON b0.Stt = b.Stt
+WHERE RTRIM(b0.Ma_Vt) IN (?, ?, ...)
+  AND b.Ngay_Ct <= ?
+  AND (RTRIM(ISNULL(b.Ma_Dt,'')) = ?
+       OR (RTRIM(ISNULL(b.Ma_Dt,'')) = '' AND RTRIM(ISNULL(b.Ma_Vm,'')) = ?))
+```
+
+Việc chọn "bảng giá tốt nhất" (ưu tiên khách > khu vực, `Ngay_Ct` mới nhất, ép 0 khi hết hạn) làm **trong Python** sau khi gom dòng theo mã — xem `backend/app/repositories/price_repo.py`.
+
+### 4.3. Điều kiện áp giá trên form (khớp VFP)
+
+- **Chỉ tự điền đơn giá khi ô Đơn giá đang trống/0** (VFP: `IF ISNULL(Gia_Nt9) OR EMPTY(Gia_Nt9)`). Nếu người dùng đã nhập giá thì **không ghi đè**.
+- Chiết khấu (`Chiet_Khau`) điền cùng lúc với đơn giá.
+- Sau khi điền, `calcLoai2Item` (frontend) tự tính `Tien_Nt9 = So_LuongBan * Gia_Nt9` và các trường dẫn xuất.
+- Nút **"Tra giá lại"** ở toolbar grid: tra lại cho các dòng đang trống đơn giá (hữu ích sau khi đổi khách/ngày). Không tự động ghi đè dòng đã có giá.
+
+### 4.4. Endpoint
+
+- `GET /api/prices/{ma_vt}?ma_dt=&ngay_ct=` → `{success, data: {ma_vt, gia, chiet_khau, expired, source, ngay_ct, ngay_ct2} | null}`.
+- `POST /api/prices/batch` body `{ma_dt, ngay_ct, ma_vt_list}` → `{success, data: {ma_dt, ngay_ct, items: [...]}}` (dùng khi đổ dòng từ phiếu xuất).
+
+### 4.5. Ghi chú
+
+- **Chỉ `SELECT` + `WITH (NOLOCK)`**; `RTRIM` mọi cột `char(n)` trước khi so khớp/trả JSON.
+- Không có bảng giá áp dụng → trả `data = null` (frontend để đơn giá trống cho người dùng nhập tay).
+- Giá phụ thuộc **độ dày** (`SO_Get_PriceByThickness`) hiện **chưa** hỗ trợ — nếu cần, bổ sung đọc `BG0` theo quy cách hoặc gọi SP tương ứng.
 
 ---
 
@@ -348,14 +404,23 @@ Mã hàng do form trung gian truyền xuống nên đây là **tra cứu chính 
 - Production: `npm run build` ra `dist/`, FastAPI phục vụ `dist/` (route `/api/...` khai báo trước, rồi mount `/assets` và route bắt tất cả trả `index.html`). Mỗi lần build xóa `dist/` cũ rồi chép bản mới.
 - Chạy FastAPI như service (NSSM hoặc Task Scheduler trên Windows), **một tiến trình** để bản chụp hàng hóa không bị lệch version.
 
-## 6. Thứ tự làm đề xuất
+## 6. Thứ tự làm & trạng thái triển khai
 
-1. Endpoint khách hàng + component chọn khách (xong nhanh, giá trị cao).
-2. Endpoint `/api/products/search` (`TOP 30`) làm phương án dự phòng.
-3. Bản chụp + `/api/products/changes` trong FastAPI.
-4. Web Worker + IndexedDB + ô input hàng hóa.
-5. `POST /api/prices/batch` cho grid.
-6. Đo thực tế bằng F12 > Network/Performance, chỉ tối ưu thêm nếu thấy chậm.
+| #   | Hạng mục                                                | Trạng thái                                              |
+| --- | ------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | Endpoint khách hàng + component chọn khách              | ✅ Đã có (`/api/lookups/khach-hang`, thêm `ma_vm`)      |
+| 2   | Endpoint `/api/products/search` (`TOP 30`) làm dự phòng | ✅ Đã có (`/api/products/search`)                       |
+| 3   | Bản chụp + `/api/products/changes` trong FastAPI        | ✅ Đã có (`product_index_service`, quét nền 45s)        |
+| 4   | Web Worker + IndexedDB + ô input hàng hóa               | ✅ Đã có (`productSearch.worker.ts`, `productIndex.ts`) |
+| 5   | Tra giá `BG`/`BG0` cho grid (`/api/prices/*`)           | ✅ Đã có (`price_repo`, `prices` router)                |
+| 6   | Đo thực tế bằng F12 > Network/Performance               | ⏳ Người dùng tự kiểm thử                               |
+
+**File code đã thêm/sửa**
+
+- Backend mới: `repositories/price_repo.py`, `services/price_service.py`, `routers/prices.py`, `schemas/price.py`, `services/product_index_service.py`, `routers/products.py`.
+- Backend sửa: `main.py` (router + GZip + lifespan quét nền), `schemas/lookup.py` (+`ma_vm`), `repositories/lookup_repo.py` (+`ma_vm`), `routers/lookups.py` (+`limit`).
+- Frontend mới: `workers/productSearch.worker.ts`, `lib/productIndex.ts`, `lib/customerIndex.ts`.
+- Frontend sửa: `lib/lookups.ts` (+`fetchPrice`/`fetchPriceBatch`/`fetchProductByCode`/`fetchVatTuServerSearch`), `components/ui/Autocomplete.tsx` (+`openOnTypeOnly`/`debounceMs`/`maxResults`), `components/DetailGrid.tsx` (+`onLookupPrice`, dùng index), `components/VoucherForm.tsx` (wiring + nút "Tra giá lại"), `types/lookup.ts` (+`ma_vm`, `PriceItem`).
 
 ---
 
@@ -404,20 +469,21 @@ SELECT VP_2014.dbo.fn_TCVNToUnicode(Ten_Dt) FROM VTSYS.dbo.DmDt
 - `fn_UnicodeToTCVN(NULL)` và `fn_UnicodeToTCVN('')` đều trả **NULL**.
 - Vì collation `..._CI_AS` **không bỏ dấu**: `LIKE N'%nguyễn%'` = 217 dòng, `LIKE N'%nguyen%'` = 0 dòng.
 
-### Giá & chiết khấu — KHÔNG có bảng giá
+### Giá & chiết khấu — bảng giá `BG`/`BG0` (đã xác minh lại)
 
-Không tồn tại bảng `DmGia`/`GiaVt`/`BangGia` nào trong cả 3 database. Giá và chiết khấu do
-**Stored Procedure mã hóa (`WITH ENCRYPTION`)** xử lý (không đọc được definition):
+Bảng giá vật lý nằm ở **`VP_2014`**: `dbo.BG` (header) + `dbo.BG0` (detail) — xem **Phụ lục F**.
+Không tồn tại bảng `DmGia`/`GiaVt`/`BangGia` nào (tên khác). Các SP sau là **lớp đọc `BG`/`BG0`**
+(mã hóa `WITH ENCRYPTION`, không đọc được definition) — webapp **không dùng** mà đọc trực tiếp `BG`/`BG0`:
 
-| SP (ở `VP_2014` **và** `KH_2014`)                                                                   | Vai trò          |
-| --------------------------------------------------------------------------------------------------- | ---------------- |
-| `dbo.SO_Get_Price`                                                                                  | Giá bán          |
-| `dbo.SO_Get_PriceByThickness`                                                                       | Giá theo độ dày  |
-| `dbo.SO_Get_Discount`                                                                               | Chiết khấu       |
-| `dbo.SO_CreatePriceList`                                                                            | Tạo bảng giá     |
-| `dbo.IN_Calculate_FIFOPrice`, `IN_Calculate_MonthAveragePrice`, `IN_Calculate_MovementAveragePrice` | Giá vốn xuất kho |
+| SP (ở `VP_2014` **và** `KH_2014`)                                                                   | Vai trò                     |
+| --------------------------------------------------------------------------------------------------- | --------------------------- |
+| `dbo.SO_Get_Price`                                                                                  | Giá bán (đọc `BG`/`BG0`)    |
+| `dbo.SO_Get_PriceByThickness`                                                                       | Giá theo độ dày             |
+| `dbo.SO_Get_Discount`                                                                               | Chiết khấu (đọc `BG`/`BG0`) |
+| `dbo.SO_CreatePriceList`                                                                            | Tạo bảng giá                |
+| `dbo.IN_Calculate_FIFOPrice`, `IN_Calculate_MonthAveragePrice`, `IN_Calculate_MovementAveragePrice` | Giá vốn xuất kho            |
 
-→ Gọi SP để tra giá; **không tìm thấy bảng** để `SELECT` trực tiếp.
+→ Webapp tra giá bằng `SELECT` trực tiếp `VP_2014.dbo.BG`/`BG0` (xem §4 và Phụ lục F).
 
 ### Bẫy pyodbc & Stored Procedure
 
@@ -444,6 +510,7 @@ stt = cur.fetchone()[0]
 - Danh mục `DmDt`/`DmVt`/`DmKho`/`DmBp`/`DmXe`/`DmNhDt` → ở **`VTSYS`**.
 - Counter cấp `Stt` (`ST_Increase_KeyIndex`, bảng `DmStt`) → ở **`VTSYS`**.
 - Bảng chứng từ `CtBH`/`CtBH0`/`SoCai`/`SoCaiVT` → ở **`VP_2014`**.
+- **Bảng giá `BG`/`BG0` → ở `VP_2014`** (KHÔNG phải `VTSYS`).
 - Phiếu xuất kho `CtBH`/`CtBH0` → ở **`KH_2014`** (đọc: `Stt_PX` liên kết về `VP_2014`).
 
 ---
@@ -505,3 +572,81 @@ stt = cur.fetchone()[0]
 - Ghi chứng từ (đầy đủ CHỐT + `CtBH_SoCai`): `backend/app/repositories/voucher_repo.py`.
 - Hủy phiếu xuất kho: `backend/app/repositories/pickup_repo.py`.
 - Node SP mã hóa: xem bằng `SELECT definition FROM sys.sql_modules` sẽ trả `NULL` (encrypted).
+
+**Bổ sung (2026-10-26) — tìm kiếm tức thì + tra giá `BG`/`BG0`:**
+
+- Tra giá bảng giá: `backend/app/repositories/price_repo.py`, `services/price_service.py`,
+  `routers/prices.py`, `schemas/price.py`.
+- Bản chụp/version danh mục vật tư: `backend/app/services/product_index_service.py`,
+  `routers/products.py` (đăng ký + GZip + lifespan quét nền trong `main.py`).
+- Frontend: `frontend/src/workers/productSearch.worker.ts`, `lib/productIndex.ts`,
+  `lib/customerIndex.ts`, `lib/lookups.ts` (thêm `fetchPrice`/`fetchPriceBatch`/`fetchProductByCode`),
+  `components/ui/Autocomplete.tsx` (`openOnTypeOnly`/`debounceMs`/`maxResults`),
+  `components/DetailGrid.tsx` (`onLookupPrice`), `components/VoucherForm.tsx` (wiring + "Tra giá lại").
+
+---
+
+## PHỤ LỤC F — Bảng giá `VP_2014.dbo.BG` / `BG0` (chi tiết)
+
+### F.1. Cấu trúc bảng
+
+**`VP_2014.dbo.BG`** (header — một dòng cho mỗi đợt bảng giá)
+
+| Cột         | Kiểu     | Null | Ghi chú                                            |
+| ----------- | -------- | ---- | -------------------------------------------------- |
+| `Stt`       | char(20) | NO   | **PK** — sinh bởi `VTSYS.dbo.ST_Increase_KeyIndex` |
+| `Ma_DvCs`   | char(2)  | NO   | Mã đơn vị cơ sở (mặc định `'01'`)                  |
+| `Ngay_Ct`   | datetime | NO   | Ngày lập bảng giá                                  |
+| `So_Ct`     | char(20) | YES  | Số/tên chứng từ bảng giá                           |
+| `Ma_Dt`     | char(16) | YES  | Mã khách hàng áp dụng (**loại trừ với `Ma_Vm`**)   |
+| `Ma_Vm`     | char(8)  | YES  | Mã khu vực áp dụng (**loại trừ với `Ma_Dt`**)      |
+| `Ma_Tte`    | char(3)  | NO   | Loại tiền tệ (mặc định `'VND'`)                    |
+| `Ty_Gia`    | numeric  | NO   | Tỷ giá (mặc định `1`)                              |
+| `Ngay_Ct1`  | datetime | YES  | Ngày bắt đầu hiệu lực                              |
+| `Ngay_Ct2`  | datetime | YES  | Ngày kết thúc hiệu lực (`NULL` = vô hạn)           |
+| `UserName`  | char(16) | YES  | Người tạo                                          |
+| `Confirmed` | bit      | YES  | Trạng thái duyệt                                   |
+| `Closed`    | char(1)  | YES  | Trạng thái đóng                                    |
+
+**`VP_2014.dbo.BG0`** (detail — một dòng cho mỗi mặt hàng)
+
+| Cột     | Kiểu       | Null | Ghi chú                                             |
+| ------- | ---------- | ---- | --------------------------------------------------- |
+| `Stt0`  | char(20)   | NO   | **PK** — sinh bởi `ST_Increase_KeyIndex`            |
+| `Stt`   | char(20)   | NO   | **FK → `BG.Stt`**                                   |
+| `Ma_Vt` | char(16)   | YES  | Mã vật tư (cho phép mã chưa khai báo trong `DmVt`)  |
+| `Dvt`   | varchar(8) | YES  | Đơn vị tính (lấy từ `DmVt`, rỗng nếu chưa khai báo) |
+| `Gia`   | numeric    | YES  | Đơn giá bán chưa chiết khấu                         |
+| `CK`    | numeric    | YES  | Tỷ lệ chiết khấu %                                  |
+
+### F.2. Liên kết khách hàng ↔ khu vực
+
+- `VTSYS.dbo.DmDt.Ma_Vm` char(8) NULL → khu vực của khách hàng.
+- `VTSYS.dbo.DmVm` (`VMID` PK, `Ma_Vm` char(8), `Ten_Vm`, `Ten_Vm2`) → danh mục khu vực.
+- Khi tra giá: lấy `Ma_Vm` của khách từ `DmDt`, rồi khớp `BG.Ma_Vm`.
+
+### F.3. Ví dụ dữ liệu thật (trích `SCT_OUTPUT/BG_data.txt`, `BG0_data.txt`)
+
+```
+-- BG (header)
+Stt                    Ngay_Ct     So_Ct  Ma_Dt       Ma_Vm    Ma_Tte  Ngay_Ct1  Ngay_Ct2
+S1000000000013789761   2026-04-01  001    NULL        NPP01    VND     NULL      NULL
+S1000000000013812494   2026-04-01  001    21000007    NULL     VND     NULL      NULL
+
+-- BG0 (detail)
+Stt0                   Stt                    Ma_Vt            Dvt   Gia          CK
+S1000000000013789763   S1000000000013789761   1300105100190    Cái   2080000.0000 54.00
+```
+
+### F.4. Quy tắc chọn bảng giá (tóm tắt)
+
+1. `Ngay_Ct <= ngay_ct` (không lấy bảng giá tương lai).
+2. Khớp `Ma_Dt` (khách) **hoặc** `Ma_Vm` (khu vực của khách).
+3. Ưu tiên **khách > khu vực**, rồi `Ngay_Ct` mới nhất (tie-break `Stt` DESC).
+4. Hết hiệu lực (`Ngay_Ct2` khác NULL và `Ngay_Ct > Ngay_Ct2`) → **ép `Gia = 0`, `CK = 0`**.
+
+### F.5. Lưu ý khi viết code
+
+- `Ma_Dt`/`Ma_Vm`/`Ma_Vt`/`Stt`/`Stt0` là `char(n)` → **luôn `RTRIM`/`.strip()`**.
+- Chỉ `SELECT` + `WITH (NOLOCK)`; không ghi vào `BG`/`BG0` từ webapp.
+- `Dvt` trong `BG0` là `varchar` (không phải TCVN3 như `DmVt.Dvt`) — không cần `fn_TCVNToUnicode`.

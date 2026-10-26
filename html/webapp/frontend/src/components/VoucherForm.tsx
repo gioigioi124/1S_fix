@@ -7,15 +7,21 @@ import {
   formatQuantity,
   getTodayDate,
 } from "../lib/format";
-import { Autocomplete } from "./ui/Autocomplete";
+import { Autocomplete, AutocompleteOption } from "./ui/Autocomplete";
+import { fetchPrice } from "../lib/lookups";
 import {
-  fetchKhachHangOptions,
-  fetchTaiKhoanOptions,
-  fetchXeOptions,
-  lookupKhachHang,
-  lookupBoPhan,
-  lookupXe,
-} from "../lib/lookups";
+  initCustomerIndex,
+  searchCustomers,
+  getCustomer,
+} from "../lib/customerIndex";
+import { initProductIndex } from "../lib/productIndex";
+import {
+  initCatalogCache,
+  searchXe,
+  searchTaiKhoan,
+  getXe,
+  getBoPhan,
+} from "../lib/catalogCache";
 import { calcLoai2Item, calcVoucherTotals } from "../lib/calc";
 import {
   Printer,
@@ -207,12 +213,43 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Debt Info State
+  // Debt Info State (khớp CustomerDebtSummary từ /api/debt/customer)
   const [debtInfo, setDebtInfo] = useState<{
+    du_no: number;
+    du_co: number;
     du_cuoi: number;
-    han_muc_no: number;
-    so_ngay_no: number;
+    gioi_han: number;
+    toi_han: number;
+    is_over_limit: boolean;
+    is_near_limit: boolean;
+    status_message: string;
   } | null>(null);
+  // Dialog cảnh báo công nợ (thay cho thẻ span trước đây).
+  const [debtDialog, setDebtDialog] = useState<{
+    title: string;
+    message: string;
+    tone: "danger" | "warning";
+  } | null>(null);
+
+  // 0a. Nạp danh mục khách hàng (RAM) + index vật tư (Web Worker) + danh mục nhỏ
+  //     (kho/xe/bộ phận/tài khoản) một lần khi mở form.
+  useEffect(() => {
+    initCustomerIndex();
+    initProductIndex();
+    initCatalogCache();
+  }, []);
+
+  // Ref giữ mã khách mới nhất để effect enrich async không ghi đè khi người dùng đã đổi mã.
+  const maDtRef = useRef<string>(maDt);
+  maDtRef.current = maDt;
+
+  // Ref giữ giá trị ô Mã KH mới nhất, cập nhật ĐỒNG BỘ trong onChange/onSelect.
+  // Tránh việc onKeyDown/onBlur dùng giá trị cũ (stale closure) ghi đè mã vừa chọn.
+  const maDtValueRef = useRef<string>(maDt);
+  // Đồng bộ khi maDt đổi từ bên ngoài (nạp phiếu cũ) — không ảnh hưởng luồng gõ/chọn.
+  useEffect(() => {
+    maDtValueRef.current = maDt;
+  }, [maDt]);
 
   // 0. Khi F2 tạo phiếu mới (isCreate), tự động focus vào ô Mã đối tượng và bôi đen nội dung có sẵn
   useEffect(() => {
@@ -269,13 +306,19 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     }
   }, [pickupPayload, tyGia, maTte, maXe, onClearPickupPayload]);
 
-  // 3. Tự động lookup thông tin Ông/Bà, Địa chỉ, Mã bộ phận, Tên bộ phận từ DmDt khi có maDt ban đầu
+  // 3. Tự động lookup thông tin Ông/Bà, Địa chỉ, Mã bộ phận, Tên bộ phận từ DmDt khi có maDt ban đầu.
+  //    Dùng index RAM (tức thì); CHỈ áp kết quả nếu mã khách chưa đổi trong lúc chờ (chống ghi đè).
   useEffect(() => {
     if (!maDt || !maDt.trim()) return;
     let cancelled = false;
+    const target = maDt.trim().toUpperCase();
     const enrichFromMaDt = async () => {
-      const cust = await lookupKhachHang(maDt);
+      // RAM-only: chờ lần nạp danh mục đầu tiên (đã khởi động từ app) rồi tra trong RAM.
+      await initCustomerIndex();
+      const cust = getCustomer(target);
       if (cancelled || !cust) return;
+      // Người dùng đã đổi sang mã khách khác trong lúc chờ -> bỏ kết quả cũ.
+      if ((maDtRef.current || "").trim().toUpperCase() !== target) return;
       if (cust.ten_dt) setTenDt(cust.ten_dt);
       const resolvedOngBa = cust.ong_ba || cust.doi_tac || cust.ten_dt || "";
       if (resolvedOngBa) setOngBa(resolvedOngBa);
@@ -299,10 +342,11 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     }
     if (tenBp && tenBp.trim()) return;
     let cancelled = false;
-    lookupBoPhan(maBp).then((bp) => {
-      if (!cancelled && bp && bp.ten_bp) {
-        setTenBp(bp.ten_bp);
-      }
+    // RAM-only: chờ lần nạp danh mục đầu tiên rồi tra trong RAM.
+    initCatalogCache().then(() => {
+      if (cancelled) return;
+      const bp = getBoPhan(maBp);
+      if (bp && bp.ten_bp) setTenBp(bp.ten_bp);
     });
     return () => {
       cancelled = true;
@@ -317,17 +361,18 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     }
     if (tenXe && tenXe.trim()) return;
     let cancelled = false;
-    lookupXe(maXe).then((xe) => {
-      if (!cancelled && xe && xe.ten_xe) {
-        setTenXe(xe.ten_xe);
-      }
+    // RAM-only: chờ lần nạp danh mục đầu tiên rồi tra trong RAM.
+    initCatalogCache().then(() => {
+      if (cancelled) return;
+      const xe = getXe(maXe);
+      if (xe && xe.ten_xe) setTenXe(xe.ten_xe);
     });
     return () => {
       cancelled = true;
     };
   }, [maXe, tenXe]);
 
-  // Load customer debt info on maDt change
+  // Load customer debt info on maDt change (công nợ đến NGÀY HIỆN TẠI).
   const loadDebtInfo = useCallback(async (dt: string) => {
     if (!dt) {
       setDebtInfo(null);
@@ -340,10 +385,16 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.data) {
+          const d = data.data;
           setDebtInfo({
-            du_cuoi: data.data.du_cuoi ?? 0,
-            han_muc_no: data.data.han_muc_no ?? 0,
-            so_ngay_no: data.data.so_ngay_no ?? 0,
+            du_no: d.du_no ?? 0,
+            du_co: d.du_co ?? 0,
+            du_cuoi: d.du_cuoi ?? 0,
+            gioi_han: d.gioi_han ?? 0,
+            toi_han: d.toi_han ?? 0,
+            is_over_limit: !!d.is_over_limit,
+            is_near_limit: !!d.is_near_limit,
+            status_message: d.status_message ?? "",
           });
         }
       }
@@ -360,6 +411,37 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     }
   }, [maDt, loadDebtInfo]);
 
+  // Hiện dialog cảnh báo khi công nợ vượt/chạm hạn mức (chỉ khi mã khách đổi).
+  const lastDebtWarnRef = useRef<string>("");
+  useEffect(() => {
+    if (!debtInfo || !maDt) return;
+    const key = `${maDt}|${debtInfo.is_over_limit}|${debtInfo.is_near_limit}`;
+    if (lastDebtWarnRef.current === key) return;
+    lastDebtWarnRef.current = key;
+
+    const fmt = (n: number) => formatCurrency(n, "VND");
+    if (debtInfo.is_over_limit) {
+      setDebtDialog({
+        title: "Vượt quá hạn mức nợ",
+        tone: "danger",
+        message:
+          `Khách hàng ${maDt} vượt quá hạn mức nợ cho phép!\n\n` +
+          `Dư nợ hiện tại: ${fmt(debtInfo.du_cuoi)}\n` +
+          `Giới hạn nợ: ${fmt(debtInfo.gioi_han)}\n\n` +
+          `Vui lòng kiểm tra lại trước khi lưu chứng từ.`,
+      });
+    } else if (debtInfo.is_near_limit) {
+      setDebtDialog({
+        title: "Đến hạn mức thanh toán",
+        tone: "warning",
+        message:
+          `Khách hàng ${maDt} đã chạm ngưỡng cảnh báo thanh toán.\n\n` +
+          `Dư nợ hiện tại: ${fmt(debtInfo.du_cuoi)}\n` +
+          `Ngưỡng cảnh báo: ${fmt(debtInfo.toi_han)}`,
+      });
+    }
+  }, [debtInfo, maDt]);
+
   // Handle Customer Selection -> tự động điền Tên KH, Ông/Bà (từ Doi_Tac hoặc Ten_Dt), Địa chỉ, Mã bộ phận, Tên bộ phận
   const [maDtError, setMaDtError] = useState<string | null>(null);
   const handleSelectCustomer = async (selectedCode: string) => {
@@ -368,11 +450,16 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       setMaDtError(null);
       return;
     }
-    const cust = await lookupKhachHang(raw);
+    // RAM-only: chờ lần nạp danh mục đầu tiên (đã khởi động từ app) rồi tra trong RAM.
+    await initCustomerIndex();
+    const cust = getCustomer(raw);
+    // Nếu người dùng đã đổi sang mã khác trong lúc chờ -> bỏ kết quả cũ.
+    if (maDtValueRef.current.trim().toUpperCase() !== raw) return;
     if (cust && cust.ma_dt) {
       // LUÔN lấy MÃ thật từ danh mục DmDt, không dùng chuỗi người dùng đã gõ.
       // Tránh trường hợp người dùng gõ TÊN khách -> Ma_Dt bị ghi thành tên (ghi rác).
       const realCode = cust.ma_dt.trim().toUpperCase();
+      maDtValueRef.current = realCode;
       setMaDt(realCode);
       setMaDtError(null);
       setTenDt(cust.ten_dt || "");
@@ -402,10 +489,99 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     setMaXe(cleanXe);
     if (hintTenXe) {
       setTenXe(hintTenXe);
-    } else {
-      const xe = await lookupXe(cleanXe);
-      setTenXe(xe?.ten_xe || "");
+      return;
     }
+    await initCatalogCache();
+    const cached = getXe(cleanXe);
+    setTenXe(cached?.ten_xe || "");
+  };
+
+  // Fetcher cho ô Mã xe: RAM-only (chờ lần nạp đầu tiên rồi tra RAM).
+  const fetchXeOptionsLocal = useCallback(
+    async (query: string): Promise<AutocompleteOption[]> => {
+      await initCatalogCache();
+      return searchXe(query);
+    },
+    [],
+  );
+
+  // Fetcher cho ô Tài khoản (F4): RAM-only.
+  const fetchTaiKhoanOptionsLocal = useCallback(
+    async (query: string): Promise<AutocompleteOption[]> => {
+      await initCatalogCache();
+      return searchTaiKhoan(query);
+    },
+    [],
+  );
+
+  // Fetcher cho ô Mã khách hàng: RAM-only (chờ lần nạp đầu tiên rồi tra RAM).
+  // Memo hóa để không tạo tham chiếu mới mỗi render (tránh Autocomplete fetch lặp).
+  const fetchKhachHangOptionsLocal = useCallback(
+    async (query: string): Promise<AutocompleteOption[]> => {
+      await initCustomerIndex();
+      return searchCustomers(query);
+    },
+    [],
+  );
+
+  // Tra đơn giá bán & chiết khấu từ bảng giá VP_2014 (BG/BG0) cho một mã vật tư.
+  const handleLookupPrice = useCallback(
+    async (maVt: string) => {
+      const price = await fetchPrice(maVt, maDt, ngayCt);
+      if (!price) return null;
+      return {
+        gia_nt9: price.gia,
+        chiet_khau: price.chiet_khau,
+        expired: price.expired,
+      };
+    },
+    [maDt, ngayCt],
+  );
+
+  // Tra lại giá cho các dòng đang trống đơn giá (sau khi đổi khách/ngày).
+  const handleRelookupPrices = async () => {
+    const targets = items
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it }) => it.ma_vt?.trim() && !(Number(it.gia_nt9 ?? 0) > 0));
+    if (targets.length === 0) {
+      setSuccessMessage("Tất cả các dòng đã có đơn giá, không cần tra lại.");
+      return;
+    }
+    let filled = 0;
+    for (const { it, idx } of targets) {
+      const price = await fetchPrice(it.ma_vt!, maDt, ngayCt);
+      if (!price) continue;
+      setItems((prev) => {
+        const next = [...prev];
+        const row = next[idx];
+        if (!row) return prev;
+        if (
+          (row.ma_vt || "").trim().toUpperCase() !==
+          (it.ma_vt || "").trim().toUpperCase()
+        ) {
+          return prev;
+        }
+        if (Number(row.gia_nt9 ?? 0) > 0) return prev;
+        next[idx] = calcLoai2Item(
+          {
+            ...row,
+            gia_nt9: price.gia,
+            chiet_khau: price.chiet_khau,
+            gia_tb_tt: "C",
+          },
+          tyGia,
+          "GIA_NT9",
+          maTte,
+        );
+        return next;
+      });
+      filled += 1;
+    }
+    setSuccessMessage(
+      filled > 0
+        ? `Đã tra lại đơn giá cho ${filled} dòng.`
+        : "Không tìm thấy bảng giá áp dụng cho các dòng trống giá.",
+    );
   };
 
   // Detail Item changes & recalculations
@@ -583,7 +759,16 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       if (!res.ok || !data.success) {
         const msg =
           data?.detail?.message || data?.message || "Lỗi khi lưu chứng từ.";
-        setErrorMessage(msg);
+        // Cảnh báo hạn mức nợ hiện qua dialog thay vì thẻ span.
+        if (/hạn mức nợ|gioi han no|vượt quá hạn mức/i.test(msg)) {
+          setDebtDialog({
+            title: "Vượt quá hạn mức nợ",
+            tone: "danger",
+            message: msg,
+          });
+        } else {
+          setErrorMessage(msg);
+        }
         return;
       }
 
@@ -843,28 +1028,50 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     {maCt}
                   </span>
                 </div>
-                {/* Real-time Debt Badge */}
+                {/* Real-time Debt Indicator (cảnh báo chi tiết hiện qua dialog) */}
                 {debtInfo && (
                   <>
                     <span className="text-neutral-300">|</span>
-                    <div
-                      className={`flex items-center gap-1 px-1.5 py-0.2 rounded text-[11px] font-medium ${
-                        debtInfo.han_muc_no > 0 &&
-                        debtInfo.du_cuoi > debtInfo.han_muc_no
-                          ? "bg-danger-100 text-danger-800 border border-danger-300 font-bold"
-                          : "bg-primary-50 text-primary-800 border border-primary-200"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fmt = (n: number) => formatCurrency(n, "VND");
+                        setDebtDialog({
+                          title: debtInfo.is_over_limit
+                            ? "Vượt quá hạn mức nợ"
+                            : debtInfo.is_near_limit
+                              ? "Đến hạn mức thanh toán"
+                              : "Công nợ khách hàng",
+                          tone: debtInfo.is_over_limit
+                            ? "danger"
+                            : debtInfo.is_near_limit
+                              ? "warning"
+                              : "warning",
+                          message:
+                            `Khách hàng: ${maDt}\n\n` +
+                            `Dư nợ hiện tại: ${fmt(debtInfo.du_cuoi)}\n` +
+                            `Giới hạn nợ: ${fmt(debtInfo.gioi_han)}\n` +
+                            `Ngưỡng cảnh báo: ${fmt(debtInfo.toi_han)}\n\n` +
+                            `${debtInfo.status_message}`,
+                        });
+                      }}
+                      className={`flex items-center gap-1 px-1.5 py-0.2 rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                        debtInfo.is_over_limit
+                          ? "bg-danger-100 text-danger-800 border border-danger-300 font-bold hover:bg-danger-200"
+                          : debtInfo.is_near_limit
+                            ? "bg-amber-100 text-amber-800 border border-amber-300 font-semibold hover:bg-amber-200"
+                            : "bg-primary-50 text-primary-800 border border-primary-200 hover:bg-primary-100"
                       }`}
-                      title={`Hạn mức: ${formatCurrency(debtInfo.han_muc_no)} | Số ngày nợ: ${debtInfo.so_ngay_no}`}
+                      title="Xem chi tiết công nợ"
                     >
                       <CreditCard className="w-3 h-3" />
                       <span>Dư nợ: {formatCurrency(debtInfo.du_cuoi)}</span>
-                      {debtInfo.han_muc_no > 0 &&
-                        debtInfo.du_cuoi > debtInfo.han_muc_no && (
-                          <span className="text-danger-600 ml-0.5">
-                            (Vượt HM!)
-                          </span>
-                        )}
-                    </div>
+                      {debtInfo.is_over_limit && (
+                        <span className="text-danger-600 ml-0.5">
+                          (Vượt HM!)
+                        </span>
+                      )}
+                    </button>
                   </>
                 )}
               </div>
@@ -880,27 +1087,36 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     selectOnFocus
                     value={maDt}
                     onChange={(val) => {
+                      maDtValueRef.current = val;
                       setMaDt(val);
                       if (maDtError) setMaDtError(null);
                     }}
-                    onSelect={(opt) => handleSelectCustomer(opt.value)}
+                    onSelect={(opt) => {
+                      maDtValueRef.current = opt.value;
+                      handleSelectCustomer(opt.value);
+                    }}
                     onBlur={() => {
-                      if (maDt.trim()) {
-                        handleSelectCustomer(maDt);
+                      const v = maDtValueRef.current;
+                      if (v.trim()) {
+                        handleSelectCustomer(v);
                       }
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        if (maDt.trim()) {
-                          handleSelectCustomer(maDt);
+                        const v = maDtValueRef.current;
+                        if (v.trim()) {
+                          handleSelectCustomer(v);
                         }
                         dienGiaiInputRef.current?.focus();
                         dienGiaiInputRef.current?.select();
                       }
                     }}
-                    fetcher={fetchKhachHangOptions}
+                    fetcher={fetchKhachHangOptionsLocal}
                     placeholder="Mã KH..."
+                    openOnTypeOnly
+                    debounceMs={30}
+                    maxResults={30}
                     className={`font-mono font-bold uppercase ${
                       maDtError
                         ? "text-danger-700 border-danger-400 bg-danger-50"
@@ -1043,7 +1259,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                         pickupBtnRef.current?.focus();
                       }
                     }}
-                    fetcher={fetchXeOptions}
+                    fetcher={fetchXeOptionsLocal}
                     placeholder="Mã xe..."
                     className="font-mono font-semibold text-neutral-800 uppercase"
                   />
@@ -1165,6 +1381,17 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           {isEditable && (
             <button
               type="button"
+              onClick={handleRelookupPrices}
+              className="inline-flex items-center px-2 py-1 rounded bg-white border border-neutral-300 text-neutral-700 shadow-sm font-medium hover:border-secondary-400 hover:text-secondary-700 transition-colors text-xs"
+              title="Tra lại đơn giá cho các dòng đang trống (theo bảng giá BG/BG0)"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-secondary-600 mr-1" /> Tra
+              giá lại
+            </button>
+          )}
+          {isEditable && (
+            <button
+              type="button"
               onClick={() => handleDeleteItem(activeRowIndex)}
               disabled={items.length <= 1}
               className="inline-flex items-center px-2 py-1 rounded bg-white border border-neutral-300 text-neutral-700 shadow-sm font-medium hover:border-danger-400 hover:text-danger-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs"
@@ -1194,6 +1421,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           onAddItem={handleAddItem}
           onValidationError={(msg) => setErrorMessage(msg)}
           firstMaVtRef={firstMaVtRef}
+          onLookupPrice={handleLookupPrice}
         />
       </div>
 
@@ -1296,6 +1524,49 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         </div>
       </footer>
 
+      {/* Debt Warning Dialog */}
+      {debtDialog && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded shadow-2xl border border-neutral-300 w-[420px] overflow-hidden animate-in fade-in zoom-in-95">
+            <div
+              className={`px-3.5 py-2 flex items-center justify-between text-white ${
+                debtDialog.tone === "danger"
+                  ? "bg-danger-700"
+                  : "bg-amber-600"
+              }`}
+            >
+              <span className="font-bold text-xs uppercase tracking-wide flex items-center gap-2">
+                {debtDialog.tone === "danger" ? (
+                  <AlertTriangle className="w-4 h-4" />
+                ) : (
+                  <CreditCard className="w-4 h-4" />
+                )}
+                {debtDialog.title}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDebtDialog(null)}
+                className="text-white/80 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 text-xs text-neutral-700 whitespace-pre-line leading-relaxed">
+              {debtDialog.message}
+            </div>
+            <div className="bg-neutral-100 px-3 py-2 flex justify-end border-t border-neutral-200">
+              <button
+                type="button"
+                onClick={() => setDebtDialog(null)}
+                className="px-4 py-1.5 bg-primary-700 hover:bg-primary-800 text-white rounded text-xs font-semibold cursor-pointer"
+              >
+                Đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Account Picker Modal (F4) */}
       {showAccountPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs">
@@ -1330,7 +1601,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                   }
                   setShowAccountPicker(false);
                 }}
-                fetcher={fetchTaiKhoanOptions}
+                fetcher={fetchTaiKhoanOptionsLocal}
                 placeholder="Ví dụ: 5111, 131, 33311..."
                 className="w-full text-xs"
               />

@@ -10,13 +10,19 @@ from app.schemas.lookup import (
 router = APIRouter(prefix="/api/lookups", tags=["Lookups"])
 
 @router.get("/vat-tu", response_model=dict)
-def get_vat_tu(q: Optional[str] = Query(None, description="Mã hoặc tên vật tư")):
-    items = lookup_repository.get_vat_tu(query=q)
+def get_vat_tu(
+    q: Optional[str] = Query(None, description="Mã hoặc tên vật tư"),
+    limit: int = Query(200, ge=1, le=50000),
+):
+    items = lookup_repository.get_vat_tu(query=q, limit=limit)
     return {"success": True, "data": [item.model_dump() for item in items]}
 
 @router.get("/khach-hang", response_model=dict)
-def get_khach_hang(q: Optional[str] = Query(None, description="Mã hoặc tên khách hàng")):
-    items = lookup_repository.get_khach_hang(query=q)
+def get_khach_hang(
+    q: Optional[str] = Query(None, description="Mã hoặc tên khách hàng"),
+    limit: int = Query(200, ge=1, le=50000),
+):
+    items = lookup_repository.get_khach_hang(query=q, limit=limit)
     return {"success": True, "data": [item.model_dump() for item in items]}
 
 @router.get("/kho", response_model=dict)

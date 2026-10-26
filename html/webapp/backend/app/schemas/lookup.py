@@ -31,6 +31,7 @@ class KhachHangLookup(BaseModel):
     ma_bp: Optional[str] = ""
     ten_bp: Optional[str] = ""
     ma_xe: Optional[str] = ""
+    ma_vm: Optional[str] = ""
 
 class KhoLookup(BaseModel):
     ma_kho: str

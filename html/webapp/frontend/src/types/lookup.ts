@@ -29,6 +29,17 @@ export interface KhachHangItem {
   ma_bp?: string;
   ten_bp?: string;
   ma_xe?: string;
+  ma_vm?: string;
+}
+
+export interface PriceItem {
+  ma_vt: string;
+  gia: number;
+  chiet_khau: number;
+  expired: boolean;
+  source?: string | null;
+  ngay_ct?: string | null;
+  ngay_ct2?: string | null;
 }
 
 export interface KhoItem {

@@ -78,7 +78,8 @@ class LookupRepository:
                 ISNULL(d.Gioi_Han, 0) AS Gioi_Han,
                 ISNULL(d.Toi_Han, 0) AS Toi_Han,
                 ISNULL(nh.Ma_Bp, '') AS Ma_Bp,
-                {fn}(ISNULL(bp.Ten_Bp, '')) AS Ten_Bp
+                {fn}(ISNULL(bp.Ten_Bp, '')) AS Ten_Bp,
+                RTRIM(ISNULL(d.Ma_Vm, '')) AS Ma_Vm
             FROM {self.sys_db}.dbo.DmDt d WITH (NOLOCK)
             LEFT JOIN {self.sys_db}.dbo.DmNhDt nh WITH (NOLOCK) ON nh.Ma_Nh_Dt = d.Ma_Nh_Dt
             LEFT JOIN {self.sys_db}.dbo.DmBp bp WITH (NOLOCK) ON bp.Ma_Bp = nh.Ma_Bp
@@ -112,7 +113,8 @@ class LookupRepository:
                         doi_tac=doi_tac,
                         ma_bp=(r[8] or "").strip(),
                         ten_bp=(r[9] or "").strip(),
-                        ma_xe=""
+                        ma_xe="",
+                        ma_vm=(r[10] or "").strip()
                     ))
         except Exception as e:
             logger.warning(f"Could not query DmDt: {e}")

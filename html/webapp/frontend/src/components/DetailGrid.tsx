@@ -1,13 +1,21 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { VoucherDetail } from "../types/voucher";
 import { formatCurrency, formatQuantity } from "../lib/format";
 import {
-  fetchVatTuOptions,
-  fetchKhoOptions,
-  lookupVatTu,
-} from "../lib/lookups";
-import { Autocomplete } from "./ui/Autocomplete";
+  searchProducts,
+  getProductByCode,
+  initProductIndex,
+} from "../lib/productIndex";
+import { initCatalogCache, searchKho } from "../lib/catalogCache";
+import { Autocomplete, AutocompleteOption } from "./ui/Autocomplete";
 import { Trash2 } from "lucide-react";
+
+/** Kết quả tra giá trả về cho DetailGrid (đơn giá ngoại tệ + % chiết khấu). */
+export interface PriceLookupResult {
+  gia_nt9: number;
+  chiet_khau: number;
+  expired?: boolean;
+}
 
 interface DetailGridProps {
   items: VoucherDetail[];
@@ -29,6 +37,11 @@ interface DetailGridProps {
   onAddItem?: () => void;
   onValidationError?: (message: string | null) => void;
   firstMaVtRef?: React.RefObject<HTMLInputElement | null>;
+  /**
+   * Tra đơn giá bán & chiết khấu cho một mã vật tư (từ bảng giá VP_2014 BG/BG0).
+   * Chỉ được gọi khi ô Đơn giá của dòng đang trống (khớp hành vi VFP).
+   */
+  onLookupPrice?: (maVt: string) => Promise<PriceLookupResult | null>;
 }
 
 export const DetailGrid: React.FC<DetailGridProps> = ({
@@ -44,8 +57,28 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   onAddItem,
   onValidationError,
   firstMaVtRef,
+  onLookupPrice,
 }) => {
   const amber = "bg-amber-50 text-amber-900 border-amber-200";
+
+  // Fetcher cho ô Mã vật tư: RAM-only (chờ lần nạp index đầu tiên rồi tra RAM).
+  // Memo hóa để không tạo tham chiếu mới mỗi render (tránh Autocomplete fetch lặp).
+  const fetchVatTuOptions = useCallback(
+    async (query: string): Promise<AutocompleteOption[]> => {
+      await initProductIndex();
+      return searchProducts(query);
+    },
+    [],
+  );
+
+  // Fetcher cho ô Mã kho: RAM-only.
+  const fetchKhoOptionsLocal = useCallback(
+    async (query: string): Promise<AutocompleteOption[]> => {
+      await initCatalogCache();
+      return searchKho(query);
+    },
+    [],
+  );
   const tableRef = useRef<HTMLTableElement | null>(null);
   const maVtInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const pendingFocusRowRef = useRef<number | null>(null);
@@ -148,6 +181,20 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     onAddItem?.();
   };
 
+  // Ghi một dòng vào itemsRef NGAY LẬP TỨC (đồng bộ) rồi mới báo lên cha.
+  // Nhờ vậy các bước async tiếp theo (tra giá) luôn đọc được bản mới nhất,
+  // không bị ghi đè bằng snapshot cũ (mất Tên VT / TK Có vừa enrich).
+  const applyRow = (
+    idx: number,
+    row: VoucherDetail,
+    fieldName?: string,
+  ) => {
+    const next = [...itemsRef.current];
+    next[idx] = row;
+    itemsRef.current = next;
+    onChangeItem?.(idx, row, fieldName);
+  };
+
   // Chỉ tra cứu đầy đủ thông tin vật tư khi người dùng CHỌN từ gợi ý hoặc RỜI Ô (onBlur)
   // Tuyệt đối KHÔNG gọi async ghi đè ma_vt trong lúc người dùng đang gõ từng ký tự!
   const enrichVatTuRow = async (
@@ -161,7 +208,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     // 1. Ghi ngay mã + tên để UI phản hồi tức thì (giữ nguyên các ô khác của dòng hiện tại).
     const immediate = itemsRef.current[idx];
     if (!immediate) return;
-    onChangeItem?.(
+    applyRow(
       idx,
       {
         ...immediate,
@@ -172,43 +219,78 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       "MA_VT",
     );
 
-    const found = await lookupVatTu(cleanCode);
-    if (!found) return;
+    // 2. Tra danh mục vật tư NGAY TRONG RAM (Web Worker) — tức thì, không chờ mạng.
+    //    Chờ lần nạp index đầu tiên (đã khởi động từ app) rồi tra RAM.
+    await initProductIndex();
+    const found = await getProductByCode(cleanCode);
 
-    // 2. Sau khi lookup xong, LẤY LẠI dòng HIỆN TẠI (người dùng có thể đã sửa
-    //    Đơn giá / Số tấm / Hệ số / SL / Chiết khấu / Mã kho trong lúc chờ).
-    //    Chỉ hợp nhất các trường thuộc danh mục vật tư, KHÔNG ghi đè ô đã nhập.
+    // LẤY LẠI dòng HIỆN TẠI (người dùng có thể đã sửa Đơn giá / Số tấm / Hệ số /
+    // SL / Chiết khấu / Mã kho trong lúc chờ). Chỉ hợp nhất trường danh mục.
     const latest = itemsRef.current[idx];
     if (!latest) return;
     // Nếu người dùng đã đổi sang mã vật tư khác trong lúc chờ -> bỏ kết quả cũ.
     if ((latest.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
 
-    const nextLoaiVt = (found.loai_vt || latest.loai_vt || "1").trim();
-    const isMut = nextLoaiVt === "2" || nextLoaiVt === "4";
-    const currentSl =
-      latest.so_luong9 && latest.so_luong9 > 0 ? latest.so_luong9 : 1;
-    const enriched: VoucherDetail = {
-      ...latest,
-      ma_vt: found.ma_vt || cleanCode,
-      ten_vt: found.ten_vt || hintTenVt || latest.ten_vt || "",
-      dvt: found.dvt || latest.dvt || "",
-      dvt_ban: found.dvt_ban || found.dvt || latest.dvt_ban || "",
-      loai_vt: nextLoaiVt,
-      tk_du2: found.tk_dt || latest.tk_du2 || "5111",
-      tk_du: found.tk_vt || latest.tk_du || "1561",
-      tk: found.tk_gv || latest.tk || "632",
-      tk_du4: found.tk_ck || latest.tk_du4 || undefined,
-      he_so9: found.he_so0 || 1.0,
-      so_luong9: currentSl,
-      so_tam: isMut
-        ? (latest.so_tam ?? 0) > 0
-          ? latest.so_tam!
-          : 1
-        : currentSl,
-      he_so8: isMut ? ((latest.he_so8 ?? 0) > 0 ? latest.he_so8! : 1) : 1,
-      gia_tb_tt: "C",
-    };
-    onChangeItem?.(idx, enriched, "MA_VT_ENRICHED");
+    if (found) {
+      const nextLoaiVt = (found.loai_vt || latest.loai_vt || "1").trim();
+      const isMut = nextLoaiVt === "2" || nextLoaiVt === "4";
+      const currentSl =
+        latest.so_luong9 && latest.so_luong9 > 0 ? latest.so_luong9 : 1;
+      applyRow(
+        idx,
+        {
+          ...latest,
+          ma_vt: found.ma || cleanCode,
+          ten_vt: found.ten || hintTenVt || latest.ten_vt || "",
+          dvt: found.dvt || latest.dvt || "",
+          dvt_ban: found.dvt_ban || found.dvt || latest.dvt_ban || "",
+          loai_vt: nextLoaiVt,
+          tk_du2: found.tk_dt || latest.tk_du2 || "5111",
+          tk_du: found.tk_vt || latest.tk_du || "1561",
+          tk: found.tk_gv || latest.tk || "632",
+          tk_du4: found.tk_ck || latest.tk_du4 || undefined,
+          he_so9: found.he_so0 || 1.0,
+          so_luong9: currentSl,
+          so_tam: isMut
+            ? (latest.so_tam ?? 0) > 0
+              ? latest.so_tam!
+              : 1
+            : currentSl,
+          he_so8: isMut ? ((latest.he_so8 ?? 0) > 0 ? latest.he_so8! : 1) : 1,
+          gia_tb_tt: "C",
+        },
+        "MA_VT_ENRICHED",
+      );
+    }
+
+    // 3. Tra đơn giá bán & chiết khấu từ bảng giá VP_2014 (BG/BG0).
+    //    Chỉ tra khi ô Đơn giá đang trống/0 (khớp VFP: chỉ fill khi Gia_Nt9 rỗng).
+    //    Chạy độc lập với bước 2 (BG0 cho phép mã chưa khai báo trong DmVt).
+    if (!onLookupPrice) return;
+    const priceRow = itemsRef.current[idx];
+    if (!priceRow) return;
+    if ((priceRow.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
+    if (Number(priceRow.gia_nt9 ?? 0) > 0) return;
+
+    const price = await onLookupPrice(cleanCode);
+    if (!price) return;
+
+    // Đọc lại dòng mới nhất; bỏ qua nếu người dùng đã đổi mã hoặc đã tự nhập đơn giá.
+    const afterPrice = itemsRef.current[idx];
+    if (!afterPrice) return;
+    if ((afterPrice.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
+    if (Number(afterPrice.gia_nt9 ?? 0) > 0) return;
+
+    applyRow(
+      idx,
+      {
+        ...afterPrice,
+        gia_nt9: price.gia_nt9,
+        chiet_khau: price.chiet_khau,
+        gia_tb_tt: "C",
+      },
+      "GIA_NT9",
+    );
   };
 
   // Handle cell navigation (Enter / Shift+Tab / Ctrl+Shift+Tab / F8)
@@ -405,6 +487,9 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             fetcher={fetchVatTuOptions}
                             placeholder="Mã VT..."
                             hideIcon
+                            openOnTypeOnly
+                            debounceMs={30}
+                            maxResults={30}
                             className="h-6 px-1.5 py-0.5 text-xs font-mono font-bold text-primary-800 uppercase bg-white border border-neutral-300 rounded focus:border-primary-500 grid-cell-input"
                           />
                         </td>
@@ -478,7 +563,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            fetcher={fetchKhoOptions}
+                            fetcher={fetchKhoOptionsLocal}
                             placeholder="Mã kho..."
                             hideIcon
                             className="h-6 px-1 py-0.5 text-xs text-center font-mono font-semibold text-neutral-800 bg-white border border-neutral-300 rounded uppercase focus:border-primary-500 grid-cell-input"

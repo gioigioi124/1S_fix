@@ -7,11 +7,11 @@ import { VoucherFilterParams } from "../types/voucher";
 import { Search, RotateCcw, Calendar } from "lucide-react";
 import { getTodayDate } from "../lib/format";
 import {
-  fetchKhachHangOptions,
   fetchKhoOptions,
   fetchVatTuOptions,
   fetchTienTeList,
 } from "../lib/lookups";
+import { initCustomerIndex, searchCustomers } from "../lib/customerIndex";
 
 interface FilterDialogProps {
   isOpen: boolean;
@@ -40,6 +40,14 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
       .then(setTienTeList)
       .catch(() => setTienTeList([]));
   }, [isOpen, tienTeList.length]);
+
+  // Fetcher cho ô Mã KH: RAM-only (chờ lần nạp đầu tiên rồi tra RAM).
+  const fetchKhachHangOptionsLocal = async (
+    query: string,
+  ): Promise<{ value: string; label: string; hint?: string }[]> => {
+    await initCustomerIndex();
+    return searchCustomers(query);
+  };
 
   const handleChange = (field: keyof VoucherFilterParams, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -176,7 +184,7 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
             placeholder="Gõ mã/tên khách hàng..."
             value={form.ma_dt || ""}
             onChange={(v) => handleChange("ma_dt", v)}
-            fetcher={fetchKhachHangOptions}
+            fetcher={fetchKhachHangOptionsLocal}
           />
           <Autocomplete
             label="Mã kho xuất (Ma_Kho)"
