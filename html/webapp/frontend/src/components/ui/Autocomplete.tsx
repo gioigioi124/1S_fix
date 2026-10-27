@@ -6,6 +6,7 @@ export interface AutocompleteOption {
   value: string;
   label: string;
   hint?: string;
+  extra?: string;
 }
 
 interface AutocompleteProps {
@@ -153,14 +154,17 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (!open) {
+      if (open && options.length > 0) {
+        e.preventDefault();
+        setHighlight((h) => (h + 1) % options.length);
+        return;
+      }
+      if (!openOnTypeOnly && !open) {
+        e.preventDefault();
         setOpen(true);
         updateDropdownPosition();
-      } else if (options.length > 0) {
-        setHighlight((h) => (h + 1) % options.length);
+        return;
       }
-      return;
     }
     if (e.key === "ArrowUp" && open && options.length > 0) {
       e.preventDefault();
@@ -242,7 +246,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
           }}
           onKeyDown={handleKeyDown}
           className={cn(
-            "w-full h-7 pl-2 text-xs border rounded bg-white text-neutral-900 border-neutral-400 focus:outline-none focus:border-primary-700 focus:ring-1 focus:ring-primary-700 disabled:bg-neutral-100 disabled:text-neutral-500",
+            "erp-input w-full text-xs py-0.5 pl-2 bg-white text-neutral-900 border-neutral-300 disabled:bg-neutral-100 disabled:text-neutral-500",
             hideIcon ? "pr-1.5" : "pr-6",
             className,
           )}
@@ -277,18 +281,34 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
                 choose(opt);
               }}
               className={cn(
-                "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3",
+                "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-2",
                 i === highlight
                   ? "bg-primary-50 text-primary-900 font-medium"
                   : "hover:bg-neutral-50",
               )}
             >
-              <span className="font-mono font-bold text-primary-800 shrink-0">
+              <span className="font-mono font-bold text-primary-800 shrink-0 min-w-[76px]">
                 {opt.label}
               </span>
               {opt.hint && (
-                <span className="text-neutral-600 font-sans truncate text-right flex-1">
+                <span
+                  className={cn(
+                    "text-neutral-800 font-sans truncate",
+                    opt.extra !== undefined
+                      ? "text-left flex-1 min-w-[160px]"
+                      : "text-right flex-1",
+                  )}
+                  title={opt.hint}
+                >
                   {opt.hint}
+                </span>
+              )}
+              {opt.extra !== undefined && (
+                <span
+                  className="text-neutral-500 font-sans truncate text-left flex-1 min-w-[140px] pl-2 border-l border-neutral-200 text-[11px]"
+                  title={opt.extra}
+                >
+                  {opt.extra || "—"}
                 </span>
               )}
             </li>

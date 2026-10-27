@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
+import {
+  arrowDir,
+  caretToEndLater,
+  handleExcelMouseDown,
+  isPrintableKey,
+  selectAllLater,
+  useExcelCellMode,
+} from "./excelCell";
 
 export interface VfpOption {
   value: string;
@@ -36,7 +44,9 @@ interface VfpLookupCellProps {
 /**
  * Ô nhập mã có dropdown gợi ý, mô phỏng đúng hành vi grid VFP (xem input.md):
  * - Dropdown CHỈ mở từ sự kiện gõ/sửa/xóa/dán — KHÔNG mở khi click/focus/Tab/mũi tên.
- * - Vào ô: hiện text + con trỏ (không bôi đen, không mở dropdown).
+ * - Kiểu Excel: click / mũi tên chỉ CHỌN ô (không hiện con trỏ, không mở dropdown);
+ *   gõ phím -> nhập đè; F2 / double-click -> sửa (← → di chuyển con trỏ);
+ *   Esc khi đang nhập -> khôi phục giá trị cũ; Delete khi đang chọn -> xóa trắng.
  * - ↑/↓: dropdown đóng -> nhảy dòng trên/dưới (cùng cột); dropdown mở -> di chuyển dòng sáng.
  * - Enter: dropdown đóng -> sang ô kế; dropdown mở -> chọn dòng sáng rồi sang ô kế.
  * - Esc: dropdown mở -> đóng, giữ nguyên chữ; dropdown đóng -> không làm gì.
@@ -80,6 +90,12 @@ export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
   const okRef = useRef<string>("");
   // Cờ hủy: khi Esc -> không kiểm tra/không enrich khi rời ô (giống Excel).
   const cancelRef = useRef(false);
+  // Chế độ ô kiểu Excel (select / enter / edit).
+  const { mode, modeRef, setMode } = useExcelCellMode();
+  // Nội dung đã bị sửa trong lần chọn ô này chưa (chỉ kiểm tra mã khi có sửa).
+  const dirtyRef = useRef(false);
+  // Giá trị lúc bắt đầu chọn ô — để Esc khôi phục.
+  const origRef = useRef<string>("");
 
   const setRefs = (el: HTMLInputElement | null) => {
     internalRef.current = el;
@@ -209,23 +225,41 @@ export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     okRef.current = ""; // chữ đã bị sửa -> chưa còn hợp lệ
+    dirtyRef.current = true;
+    // Gõ / dán khi đang ở chế độ chọn -> chuyển sang chế độ nhập.
+    if (modeRef.current === "select") setMode("enter");
     onValueChange(v);
     scheduleSearch(v);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const isOpen = open && options.length > 0;
-    if (e.key === "ArrowDown") {
+    const m = modeRef.current;
+    const el = e.currentTarget;
+    const dir = arrowDir(e.key);
+    if (dir === "up" || dir === "down") {
       e.preventDefault();
-      if (isOpen) setHighlight((h) => (h + 1) % options.length);
-      else onNavigate?.("down", e.currentTarget);
+      // Dropdown mở -> di chuyển dòng sáng; đóng -> sang dòng trên/dưới (cùng cột).
+      if (isOpen) {
+        setHighlight((h) =>
+          dir === "down"
+            ? (h + 1) % options.length
+            : (h - 1 + options.length) % options.length,
+        );
+      } else {
+        setMode("select");
+        onNavigate?.(dir, el);
+      }
       return;
     }
-    if (e.key === "ArrowUp") {
+    if (dir === "left" || dir === "right") {
+      // Chế độ sửa (F2 / double-click): ← → di chuyển con trỏ trong chữ.
+      if (m === "edit") return;
+      // Chế độ chọn / nhập: luôn nhảy ô (giống Excel).
       e.preventDefault();
-      if (isOpen)
-        setHighlight((h) => (h - 1 + options.length) % options.length);
-      else onNavigate?.("up", e.currentTarget);
+      if (open) close();
+      setMode("select");
+      onNavigate?.(dir, el);
       return;
     }
     if (e.key === "Enter") {
@@ -234,60 +268,66 @@ export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
         pick(highlight);
       } else {
         close();
-        onNavigate?.("next", e.currentTarget);
+        setMode("select");
+        onNavigate?.("next", el);
       }
       return;
     }
     if (e.key === "F2") {
       // F2: vào chế độ SỬA -> con trỏ ở cuối chữ (giống Excel).
       e.preventDefault();
-      const el = e.currentTarget;
-      const n = el.value.length;
-      el.setSelectionRange(n, n);
+      setMode("edit");
+      caretToEndLater(el);
       return;
     }
     if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
       if (open) {
         // Đang mở dropdown -> chỉ đóng dropdown, giữ nguyên chữ.
-        e.preventDefault();
-        e.stopPropagation();
         close();
-      } else {
-        // Không có dropdown -> thoát ô (bỏ chọn), giống Excel.
-        e.preventDefault();
-        e.stopPropagation();
-        cancelRef.current = true;
-        e.currentTarget.blur();
+        return;
+      }
+      if (m !== "select") {
+        // Đang nhập/sửa -> hủy, khôi phục giá trị ban đầu và ở lại ô (giống Excel).
+        const orig = origRef.current;
+        if (dirtyRef.current && el.value !== orig) {
+          el.value = orig;
+          onValueChange(orig);
+          if (orig.trim()) onCommit(orig);
+          okRef.current = orig;
+        }
+        dirtyRef.current = false;
+        setMode("select");
+        selectAllLater(el);
+        return;
+      }
+      // Chế độ chọn -> thoát ô (bỏ chọn).
+      cancelRef.current = true;
+      el.blur();
+      return;
+    }
+    if (m === "select" && e.key === "Delete") {
+      // Delete ở chế độ chọn: xóa trắng ô.
+      e.preventDefault();
+      if (el.value) {
+        okRef.current = "";
+        dirtyRef.current = true;
+        onValueChange("");
       }
       return;
     }
-    // Mũi tên Trái/Phải: di chuyển NGANG trong cùng một dòng.
-    // Chỉ nhảy ô khi con trỏ đã ở đầu/cuối chữ; nếu đang ở giữa chữ thì để
-    // trình duyệt di chuyển con trỏ bình thường (không preventDefault).
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      if (open) {
-        // Dropdown đang mở -> đóng rồi mới di chuyển ngang.
-        close();
-      }
-      const el = e.currentTarget;
-      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
-      const atEnd =
-        el.selectionStart === el.value.length &&
-        el.selectionEnd === el.value.length;
-      if (
-        (e.key === "ArrowLeft" && atStart) ||
-        (e.key === "ArrowRight" && atEnd)
-      ) {
-        e.preventDefault();
-        onNavigate?.(e.key === "ArrowLeft" ? "left" : "right", el);
-      }
+    if (m === "select" && isPrintableKey(e)) {
+      // Gõ đè: nội dung đang bôi đen được thay bằng ký tự vừa gõ.
+      setMode("enter");
       return;
     }
     if (e.key === "Tab") {
       // Tab / Shift+Tab: nhảy ô trong dòng; ở đầu/cuối dòng thì sang dòng kề.
       e.preventDefault();
       close();
-      onNavigate?.(e.shiftKey ? "prev" : "next", e.currentTarget);
+      setMode("select");
+      onNavigate?.(e.shiftKey ? "prev" : "next", el);
       return;
     }
   };
@@ -295,11 +335,16 @@ export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
   const handleBlur = () => {
     reqSeqRef.current++; // hủy kết quả tìm kiếm đang chờ
     window.setTimeout(() => setOpen(false), 120);
+    setMode("select");
+    const wasDirty = dirtyRef.current;
+    dirtyRef.current = false;
     // Esc -> hủy: không kiểm tra/không enrich khi rời ô.
     if (cancelRef.current) {
       cancelRef.current = false;
       return;
     }
+    // Kiểu Excel: chỉ chọn ô rồi rời đi (không sửa) -> không kiểm tra lại mã.
+    if (!wasDirty) return;
     const v = (internalRef.current?.value ?? value).trim();
     if (!v) return;
     if (okRef.current && okRef.current.trim().toUpperCase() === v.toUpperCase())
@@ -315,29 +360,26 @@ export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
         autoComplete="off"
         spellCheck={false}
         data-vfp-lookup="true"
+        data-mode={mode}
         value={value}
         disabled={disabled}
         placeholder={placeholder}
         onChange={handleChange}
+        onMouseDown={(e) => handleExcelMouseDown(e, modeRef.current)}
         onFocus={(e) => {
           onFocusRow?.();
-          // Kiểu Excel: khi ô được CHỌN (focus) -> bôi đen toàn bộ nội dung.
-          // Nhờ vậy gõ phím sẽ THAY THẾ nội dung cũ, Delete/Backspace xóa trắng ô.
+          // Kiểu Excel: khi ô được CHỌN (focus) -> chế độ chọn, bôi đen toàn bộ (ẩn).
+          // Nhờ vậy gõ phím sẽ THAY THẾ nội dung cũ, Delete xóa trắng ô.
           // (Double-click / F2 sẽ đặt con trỏ để sửa từng ký tự — xem onDoubleClick/onKeyDown.)
-          const el = e.currentTarget;
-          window.setTimeout(() => {
-            if (document.activeElement === el) el.select();
-          }, 0);
+          setMode("select");
+          dirtyRef.current = false;
+          origRef.current = e.currentTarget.value;
+          selectAllLater(e.currentTarget);
         }}
         onDoubleClick={(e) => {
           // Double-click: vào chế độ SỬA -> con trỏ ở cuối chữ (không bôi đen).
-          const el = e.currentTarget;
-          window.setTimeout(() => {
-            if (document.activeElement === el) {
-              const n = el.value.length;
-              el.setSelectionRange(n, n);
-            }
-          }, 0);
+          setMode("edit");
+          caretToEndLater(e.currentTarget);
         }}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}

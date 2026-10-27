@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { VoucherFullDetail, VoucherDetail } from "../types/voucher";
-import { DetailGrid } from "./DetailGrid";
+import { DetailGrid, DetailGridHandle } from "./DetailGrid";
 import {
   formatCurrency,
   formatDate,
@@ -109,10 +109,12 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const ngayCtInputRef = useRef<HTMLInputElement | null>(null);
   const soCtInputRef = useRef<HTMLInputElement | null>(null);
   const maDtInputRef = useRef<HTMLInputElement | null>(null);
+  const tenDtInputRef = useRef<HTMLInputElement | null>(null);
   const dienGiaiInputRef = useRef<HTMLInputElement | null>(null);
   const maXeInputRef = useRef<HTMLInputElement | null>(null);
   const pickupBtnRef = useRef<HTMLButtonElement | null>(null);
   const firstMaVtRef = useRef<HTMLInputElement | null>(null);
+  const detailGridRef = useRef<DetailGridHandle | null>(null);
 
   // Header State
   const [ngayCt, setNgayCt] = useState<string>(
@@ -138,7 +140,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     voucher?.dia_chi || initialInherited?.dia_chi || "",
   );
   const [dienGiai0, setDienGiai0] = useState<string>(
-    voucher?.dien_giai0 || initialInherited?.dien_giai0 || "Xuất bán hàng hóa",
+    voucher?.dien_giai0 || initialInherited?.dien_giai0 || "Mua hàng",
   );
   const [maBp, setMaBp] = useState<string>(
     voucher?.ma_bp || initialInherited?.ma_bp || "",
@@ -577,52 +579,6 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     [maDt, ngayCt],
   );
 
-  // Tra lại giá cho các dòng đang trống đơn giá (sau khi đổi khách/ngày).
-  const handleRelookupPrices = async () => {
-    const targets = items
-      .map((it, idx) => ({ it, idx }))
-      .filter(({ it }) => it.ma_vt?.trim() && !(Number(it.gia_nt9 ?? 0) > 0));
-    if (targets.length === 0) {
-      setSuccessMessage("Tất cả các dòng đã có đơn giá, không cần tra lại.");
-      return;
-    }
-    let filled = 0;
-    for (const { it, idx } of targets) {
-      const price = await fetchPrice(it.ma_vt!, maDt, ngayCt);
-      if (!price) continue;
-      setItems((prev) => {
-        const next = [...prev];
-        const row = next[idx];
-        if (!row) return prev;
-        if (
-          (row.ma_vt || "").trim().toUpperCase() !==
-          (it.ma_vt || "").trim().toUpperCase()
-        ) {
-          return prev;
-        }
-        if (Number(row.gia_nt9 ?? 0) > 0) return prev;
-        next[idx] = calcLoai2Item(
-          {
-            ...row,
-            gia_nt9: price.gia,
-            chiet_khau: price.chiet_khau,
-            gia_tb_tt: "C",
-          },
-          tyGia,
-          "GIA_NT9",
-          maTte,
-        );
-        return next;
-      });
-      filled += 1;
-    }
-    setSuccessMessage(
-      filled > 0
-        ? `Đã tra lại đơn giá cho ${filled} dòng.`
-        : "Không tìm thấy bảng giá áp dụng cho các dòng trống giá.",
-    );
-  };
-
   // Detail Item changes & recalculations
   const handleItemChange = (
     idx: number,
@@ -654,6 +610,28 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   };
 
   const handleAddItem = () => {
+    setErrorMessage(null);
+
+    // Tìm dòng trống (chưa có mã hàng hóa / mã vật tư)
+    let emptyIdx = -1;
+    if (
+      activeRowIndex >= 0 &&
+      activeRowIndex < items.length &&
+      (!items[activeRowIndex]?.ma_vt || !items[activeRowIndex].ma_vt.trim())
+    ) {
+      emptyIdx = activeRowIndex;
+    } else {
+      emptyIdx = items.findIndex((it) => !it.ma_vt || !it.ma_vt.trim());
+    }
+
+    if (emptyIdx >= 0) {
+      // Dòng trống: focus ngay vào mã hàng hóa của dòng đó, không thông báo nữa
+      setActiveRowIndex(emptyIdx);
+      detailGridRef.current?.focusMaVt(emptyIdx);
+      return;
+    }
+
+    // Nếu tất cả các dòng đều đã có mã hàng hóa: thêm dòng mới
     const next = [...items, emptyDetailRow()];
     setItems(next);
     setActiveRowIndex(next.length - 1);
@@ -852,9 +830,12 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       } else if (
         isEditable &&
         e.ctrlKey &&
-        (e.code === "NumpadAdd" || e.key === "+")
+        (e.code === "NumpadAdd" ||
+          e.key === "+" ||
+          e.key === "=" ||
+          e.code === "Equal")
       ) {
-        // Ctrl + (numpad) = thêm dòng
+        // Ctrl + (numpad hoặc phím +/=) = thêm dòng
         e.preventDefault();
         handleAddItem();
       } else if (
@@ -873,9 +854,70 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   }, [isEditable, activeRowIndex, items, maDt, ngayCt, soCt, totals]);
 
   const readonlyField =
-    "erp-input w-full font-mono text-neutral-800 bg-neutral-100 border-neutral-200 cursor-default";
+    "erp-input w-full font-mono text-neutral-800 bg-neutral-100 border-neutral-200 cursor-text select-text";
   const disabledLookupField =
-    "erp-input w-full text-xs py-0.5 bg-neutral-100 text-neutral-700 border-neutral-200 cursor-not-allowed";
+    "erp-input w-full text-xs py-0.5 bg-neutral-100 text-neutral-700 border-neutral-200 cursor-text select-text";
+
+  // Điều hướng các ô trên Header bằng phím mũi tên ↑ / ↓ / ← / → (tương tự Excel / VFP)
+  const headerOrderedRefs = [
+    ngayCtInputRef,
+    soCtInputRef,
+    maDtInputRef,
+    tenDtInputRef,
+    dienGiaiInputRef,
+    maXeInputRef,
+  ];
+  const focusHeaderControl = (el: HTMLElement | null | undefined) => {
+    if (!el) return;
+    el.focus();
+    if (el instanceof HTMLInputElement && el.type !== "date") {
+      setTimeout(() => {
+        if (document.activeElement === el) el.select();
+      }, 0);
+    }
+  };
+  const handleHeaderArrowNav = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    idx: number,
+  ) => {
+    const el = e.currentTarget;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (idx < headerOrderedRefs.length - 1) {
+        focusHeaderControl(headerOrderedRefs[idx + 1].current);
+      } else {
+        focusHeaderControl(firstMaVtRef.current);
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (idx > 0) {
+        focusHeaderControl(headerOrderedRefs[idx - 1].current);
+      }
+    } else if (e.key === "ArrowLeft") {
+      const atStart =
+        el.type === "date" ||
+        (el.selectionStart === 0 && el.selectionEnd === 0) ||
+        (el.selectionStart === 0 && el.selectionEnd === el.value.length);
+      if (atStart && idx > 0) {
+        e.preventDefault();
+        focusHeaderControl(headerOrderedRefs[idx - 1].current);
+      }
+    } else if (e.key === "ArrowRight") {
+      const atEnd =
+        el.type === "date" ||
+        (el.selectionStart === el.value.length &&
+          el.selectionEnd === el.value.length) ||
+        (el.selectionStart === 0 && el.selectionEnd === el.value.length);
+      if (atEnd) {
+        e.preventDefault();
+        if (idx < headerOrderedRefs.length - 1) {
+          focusHeaderControl(headerOrderedRefs[idx + 1].current);
+        } else {
+          focusHeaderControl(firstMaVtRef.current);
+        }
+      }
+    }
+  };
 
   return (
     <div className="flex flex-col h-full w-full bg-white overflow-hidden">
@@ -989,9 +1031,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         className="bg-neutral-50/90 border-b border-neutral-200 px-3 py-1.5 shrink-0"
         data-purpose="master-form"
       >
-        <div className="grid grid-cols-12 gap-x-2.5 gap-y-1.5 max-w-[1920px] mx-auto">
-          {/* Left & Center: Transaction & Customer (col 1-10) */}
-          <div className="col-span-12 xl:col-span-10 grid grid-cols-12 gap-x-2 gap-y-1.5">
+        <div className="flex flex-col xl:flex-row items-start gap-2.5 max-w-[1920px] mx-auto">
+          {/* Left & Center: Transaction & Customer */}
+          <div className="w-full xl:flex-1 min-w-0 grid grid-cols-12 gap-x-2 gap-y-1.5">
             {/* Row 1: Dates, Voucher No & Credit Guard */}
             <div className="col-span-12 flex flex-wrap items-center gap-x-3 gap-y-1 pb-1 border-b border-neutral-200/80">
               <div className="flex items-center gap-1.5">
@@ -1010,13 +1052,16 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                         e.preventDefault();
                         soCtInputRef.current?.focus();
                         soCtInputRef.current?.select();
+                        return;
                       }
+                      handleHeaderArrowNav(e, 0);
                     }}
                   />
                 ) : (
                   <input
                     className={readonlyField + " w-28 text-xs py-0.5"}
                     value={formatDate(ngayCt)}
+                    onFocus={(e) => e.currentTarget.select()}
                     readOnly
                   />
                 )}
@@ -1038,101 +1083,102 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                         e.preventDefault();
                         maDtInputRef.current?.focus();
                         maDtInputRef.current?.select();
+                        return;
                       }
+                      handleHeaderArrowNav(e, 1);
                     }}
                     placeholder="Tự động cấp số"
                   />
                 ) : (
                   <input
-                    className="erp-input w-24 font-mono font-bold text-primary-700 bg-white border-primary-300 text-center uppercase tracking-wide text-xs py-0.5 cursor-default"
+                    className="erp-input w-24 font-mono font-bold text-primary-700 bg-white border-primary-300 text-center uppercase tracking-wide text-xs py-0.5 cursor-text select-text"
                     value={soCt || "—"}
+                    onFocus={(e) => e.currentTarget.select()}
                     readOnly
                   />
                 )}
               </div>
 
-              {/* Financial Credit Health Monitor: Ma_Vm + Giới hạn nợ */}
-              <div className="flex items-center gap-2 ml-auto bg-white py-0.5 px-2.5 rounded border border-neutral-200 shadow-sm text-xs">
-                <div className="flex items-center gap-1">
-                  <span className="text-neutral-500 font-medium text-[11px]">
-                    Ma_Vm:
-                  </span>
-                  <span className="inline-flex items-center px-1.5 rounded text-[11px] font-mono font-bold bg-secondary-50 text-secondary-700 border border-secondary-200 min-w-[40px] justify-center">
-                    {maVm || "—"}
-                  </span>
-                </div>
-                <span className="text-neutral-300">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-neutral-500 font-medium text-[11px]">
-                    Giới hạn nợ:
-                  </span>
-                  <span className="font-mono font-bold text-tertiary-600 text-[11px]">
-                    {debtInfo ? formatCurrency(debtInfo.gioi_han) : "—"}
-                  </span>
-                </div>
-                <span className="text-neutral-300">|</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-neutral-500 font-medium text-[11px]">
-                    Ma_Ct:
-                  </span>
-                  <span className="inline-flex items-center px-1 rounded text-[10px] font-bold bg-success-50 text-success-700 border border-success-200">
-                    {maCt}
-                  </span>
-                </div>
-                {/* Real-time Debt Indicator (cảnh báo chi tiết hiện qua dialog) */}
-                {debtInfo && (
-                  <>
-                    <span className="text-neutral-300">|</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const fmt = (n: number) => formatCurrency(n, "VND");
-                        setDebtDialog({
-                          title: debtInfo.is_over_limit
-                            ? "Vượt quá hạn mức nợ"
-                            : debtInfo.is_near_limit
-                              ? "Đến hạn mức thanh toán"
-                              : "Công nợ khách hàng",
-                          tone: debtInfo.is_over_limit
-                            ? "danger"
-                            : debtInfo.is_near_limit
-                              ? "warning"
-                              : "warning",
-                          message:
-                            `Khách hàng: ${maDt}\n\n` +
-                            `Dư nợ hiện tại: ${fmt(debtInfo.du_cuoi)}\n` +
-                            `Giới hạn nợ: ${fmt(debtInfo.gioi_han)}\n` +
-                            `Ngưỡng cảnh báo: ${fmt(debtInfo.toi_han)}\n\n` +
-                            `${debtInfo.status_message}`,
-                        });
-                      }}
-                      className={`flex items-center gap-1 px-1.5 py-0.2 rounded text-[11px] font-medium cursor-pointer transition-colors ${
-                        debtInfo.is_over_limit
-                          ? "bg-danger-100 text-danger-800 border border-danger-300 font-bold hover:bg-danger-200"
-                          : debtInfo.is_near_limit
-                            ? "bg-amber-100 text-amber-800 border border-amber-300 font-semibold hover:bg-amber-200"
-                            : "bg-primary-50 text-primary-800 border border-primary-200 hover:bg-primary-100"
-                      }`}
-                      title="Xem chi tiết công nợ"
-                    >
-                      <CreditCard className="w-3 h-3" />
-                      <span>Dư nợ: {formatCurrency(debtInfo.du_cuoi)}</span>
-                      {debtInfo.is_over_limit && (
-                        <span className="text-danger-600 ml-0.5">
-                          (Vượt HM!)
-                        </span>
-                      )}
-                    </button>
-                  </>
-                )}
+              {/* Ma_Vm + Giới hạn nợ + Dư nợ (hiển thị dạng label thông thường cạnh Số phiếu) */}
+              <div className="flex items-center gap-1.5 ml-2">
+                <label className="erp-label text-neutral-600 font-semibold">
+                  Ma_Vm:
+                </label>
+                <span className="font-mono font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-md text-xs">
+                  {maVm || "—"}
+                </span>
               </div>
+
+              <span className="text-neutral-300">|</span>
+
+              <div className="flex items-center gap-1.5">
+                <label className="erp-label text-neutral-600 font-semibold">
+                  Giới hạn nợ:
+                </label>
+                <span className="font-mono font-bold text-neutral-800 px-2 py-0.5 rounded-md text-xs">
+                  {debtInfo ? formatCurrency(debtInfo.gioi_han) : "—"}
+                </span>
+              </div>
+
+              {debtInfo && (
+                <>
+                  <span className="text-neutral-300">|</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fmt = (n: number) => formatCurrency(n, "VND");
+                      setDebtDialog({
+                        title: debtInfo.is_over_limit
+                          ? "Vượt quá hạn mức nợ"
+                          : debtInfo.is_near_limit
+                            ? "Đến hạn mức thanh toán"
+                            : "Công nợ khách hàng",
+                        tone: debtInfo.is_over_limit
+                          ? "danger"
+                          : debtInfo.is_near_limit
+                            ? "warning"
+                            : "warning",
+                        message:
+                          `Khách hàng: ${maDt}\n\n` +
+                          `Dư nợ hiện tại: ${fmt(debtInfo.du_cuoi)}\n` +
+                          `Giới hạn nợ: ${fmt(debtInfo.gioi_han)}\n` +
+                          `Ngưỡng cảnh báo: ${fmt(debtInfo.toi_han)}\n\n` +
+                          `${debtInfo.status_message}`,
+                      });
+                    }}
+                    className={`inline-flex items-center gap-1 text-xs cursor-pointer hover:underline ${
+                      debtInfo.is_over_limit
+                        ? "text-danger-700 font-bold"
+                        : debtInfo.is_near_limit
+                          ? "text-amber-700 font-semibold"
+                          : "text-neutral-700 font-medium"
+                    }`}
+                    title="Xem chi tiết công nợ"
+                  >
+                    <CreditCard className="w-3.5 h-3.5 opacity-70" />
+                    <span>
+                      Dư nợ:{" "}
+                      <span className="font-mono font-bold">
+                        {formatCurrency(debtInfo.du_cuoi)}
+                      </span>
+                    </span>
+                    {debtInfo.is_over_limit && (
+                      <span className="text-danger-600 ml-0.5 font-bold">
+                        (Vượt HM!)
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
             </div>
 
-            {/* Row 2: Đối tượng (Mã + Tên disabled), Địa chỉ (disabled), Ông/Bà (disabled) cùng 1 dòng */}
+            {/* Row 2: Đối tượng (Mã + Tên), Địa chỉ (readonly), Ông/Bà (readonly) cân đối cùng 1 dòng */}
             <div className="col-span-12 flex items-center gap-2">
-              <label className="erp-label w-18 shrink-0">Đối tượng:</label>
+              <label className="erp-label w-[72px] shrink-0 inline-block">
+                Đối tượng:
+              </label>
               {isEditable ? (
-                <div className="w-36 shrink-0">
+                <div className="w-40 shrink-0">
                   <Autocomplete
                     inputRef={maDtInputRef}
                     selectOnFocus
@@ -1159,16 +1205,18 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                         if (v.trim()) {
                           handleSelectCustomer(v);
                         }
-                        dienGiaiInputRef.current?.focus();
-                        dienGiaiInputRef.current?.select();
+                        tenDtInputRef.current?.focus();
+                        tenDtInputRef.current?.select();
+                        return;
                       }
+                      handleHeaderArrowNav(e, 2);
                     }}
                     fetcher={fetchKhachHangOptionsLocal}
                     placeholder="Mã KH..."
                     openOnTypeOnly
                     debounceMs={30}
                     maxResults={30}
-                    dropdownMinWidth={560}
+                    dropdownMinWidth={680}
                     className={`font-mono font-bold uppercase ${
                       maDtError
                         ? "text-danger-700 border-danger-400 bg-danger-50"
@@ -1189,57 +1237,107 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                   <input
                     className={disabledLookupField + " font-mono font-bold"}
                     value={maDt}
-                    disabled
+                    onFocus={(e) => e.currentTarget.select()}
                     readOnly
                   />
                 </div>
               )}
-              <div className="w-64 shrink-0">
-                <input
-                  className={`erp-input w-full font-semibold text-neutral-800 text-xs py-0.5 ${
-                    isEditable
-                      ? "bg-white border-neutral-300"
-                      : "bg-neutral-100 border-neutral-200 cursor-default"
-                  }`}
-                  value={tenDt || ""}
-                  onChange={(e) => setTenDt(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  readOnly={!isEditable}
-                  placeholder="Tên khách hàng"
-                />
+              <div className="w-96 shrink-0">
+                {isEditable ? (
+                  <input
+                    ref={tenDtInputRef}
+                    className="erp-input w-full font-semibold text-neutral-800 text-xs py-0.5 bg-white border-neutral-300"
+                    value={tenDt || ""}
+                    onChange={(e) => setTenDt(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        dienGiaiInputRef.current?.focus();
+                        dienGiaiInputRef.current?.select();
+                        return;
+                      }
+                      handleHeaderArrowNav(e, 3);
+                    }}
+                    placeholder="Tên khách hàng"
+                  />
+                ) : (
+                  <input
+                    className={
+                      disabledLookupField + " font-semibold text-neutral-800"
+                    }
+                    value={tenDt || ""}
+                    onFocus={(e) => e.currentTarget.select()}
+                    readOnly
+                    title={tenDt || ""}
+                    placeholder="Tên khách hàng"
+                  />
+                )}
               </div>
 
               <label className="erp-label shrink-0 ml-1">Địa chỉ:</label>
-              <div className="flex-1 min-w-[160px]">
+              <div className="flex-1 min-w-[180px] ">
                 <input
                   className={disabledLookupField}
                   value={diaChi || ""}
-                  disabled
+                  onFocus={(e) => e.currentTarget.select()}
                   readOnly
-                />
-              </div>
-
-              <label className="erp-label shrink-0 ml-1">Ông/Bà:</label>
-              <div className="w-56 shrink-0">
-                <input
-                  className={disabledLookupField + " font-medium"}
-                  value={ongBa || ""}
-                  disabled
-                  readOnly
+                  title={diaChi || ""}
                 />
               </div>
             </div>
 
-            {/* Row 3: Diễn giải, Bộ phận (disabled), Mã xe + Biển số, và nút Chọn phiếu xuất cùng 1 dòng */}
+            {/* Row 3: Ông/Bà (readonly) và Bộ phận (readonly) cùng 1 dòng ngay dưới Đối tượng */}
             <div className="col-span-12 flex items-center gap-2">
-              <label className="erp-label w-18 shrink-0">Diễn giải:</label>
-              <div className="w-[26%] min-w-[180px] shrink-0">
+              <label className="erp-label w-[72px] shrink-0 inline-block">
+                Ông/Bà:
+              </label>
+              <div className="w-[350px] shrink-0">
+                <input
+                  className={disabledLookupField + " font-medium"}
+                  value={ongBa || ""}
+                  onFocus={(e) => e.currentTarget.select()}
+                  readOnly
+                  title={ongBa || ""}
+                />
+              </div>
+
+              <label className="erp-label shrink-0 ml-1 text-neutral-500">
+                Bộ phận:
+              </label>
+              <div className="w-16 shrink-0">
+                <input
+                  className={
+                    disabledLookupField + " font-mono font-semibold text-center"
+                  }
+                  value={maBp || ""}
+                  onFocus={(e) => e.currentTarget.select()}
+                  readOnly
+                />
+              </div>
+              <div className="w-96 shrink-0">
+                <input
+                  className={disabledLookupField}
+                  value={tenBp || ""}
+                  onFocus={(e) => e.currentTarget.select()}
+                  readOnly
+                  title={tenBp || ""}
+                />
+              </div>
+            </div>
+
+            {/* Row 4: Diễn giải, Mã xe + Biển số, và nút Chọn phiếu xuất cùng 1 dòng */}
+            <div className="col-span-12 flex items-center gap-2">
+              <label className="erp-label w-[72px] shrink-0 inline-block">
+                Diễn giải:
+              </label>
+              <div className="w-[350px] shrink-0">
                 <input
                   ref={dienGiaiInputRef}
                   className={`erp-input w-full font-medium text-neutral-800 text-xs py-0.5 ${
                     isEditable
                       ? "bg-white border-neutral-300"
-                      : "bg-neutral-100 cursor-default"
+                      : "bg-neutral-100 cursor-text select-text"
                   }`}
                   value={dienGiai0 || ""}
                   onChange={(e) => setDienGiai0(e.target.value)}
@@ -1257,32 +1355,11 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                       e.preventDefault();
                       maXeInputRef.current?.focus();
                       maXeInputRef.current?.select();
+                      return;
                     }
+                    handleHeaderArrowNav(e, 4);
                   }}
                   readOnly={!isEditable}
-                />
-              </div>
-
-              <label className="erp-label shrink-0 ml-1 text-neutral-500">
-                Bộ phận:
-              </label>
-              <div className="w-14 shrink-0">
-                <input
-                  className={
-                    disabledLookupField + " font-mono font-semibold text-center"
-                  }
-                  value={maBp || ""}
-                  disabled
-                  readOnly
-                />
-              </div>
-              <div className="flex-1 min-w-[190px]">
-                <input
-                  className={disabledLookupField}
-                  value={tenBp || ""}
-                  disabled
-                  readOnly
-                  title={tenBp || ""}
                 />
               </div>
 
@@ -1303,7 +1380,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                           handleSelectXe(maXe);
                         }
                         pickupBtnRef.current?.focus();
+                        return;
                       }
+                      handleHeaderArrowNav(e, 5);
                     }}
                     fetcher={fetchXeOptionsLocal}
                     openOnTypeOnly
@@ -1319,16 +1398,16 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                   <input
                     className={disabledLookupField + " font-mono text-center"}
                     value={maXe || ""}
-                    disabled
+                    onFocus={(e) => e.currentTarget.select()}
                     readOnly
                   />
                 </div>
               )}
-              <div className="flex-1 min-w-[160px]">
+              <div className="w-64 shrink-0">
                 <input
                   className={disabledLookupField}
                   value={tenXe || ""}
-                  disabled
+                  onFocus={(e) => e.currentTarget.select()}
                   readOnly
                   title={tenXe || ""}
                 />
@@ -1344,15 +1423,22 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                       e.preventDefault();
                       e.stopPropagation();
                       onOpenPickup(maDt, ngayCt);
-                    } else if (e.key === "Tab" && !e.shiftKey) {
+                    } else if (
+                      (e.key === "Tab" && !e.shiftKey) ||
+                      e.key === "ArrowDown" ||
+                      e.key === "ArrowRight"
+                    ) {
                       if (firstMaVtRef.current) {
                         e.preventDefault();
                         firstMaVtRef.current.focus();
                         firstMaVtRef.current.select();
                       }
+                    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                      e.preventDefault();
+                      focusHeaderControl(maXeInputRef.current);
                     }
                   }}
-                  className="inline-flex items-center px-2.5 py-1 rounded bg-secondary-50 hover:bg-secondary-100 focus:ring-2 focus:ring-primary-600 focus:outline-none text-secondary-700 border border-secondary-300 shadow-sm font-semibold text-xs whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                  className="inline-flex items-center px-2.5 py-0.5 rounded bg-secondary-50 hover:bg-secondary-100 focus:ring-2 focus:ring-primary-600 focus:outline-none text-secondary-700 border border-secondary-300 shadow-sm font-semibold text-xs whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                   title="Chọn phiếu xuất từ kho (ctbhch)"
                 >
                   <FileText className="w-3.5 h-3.5 mr-1.5 text-secondary-600" />
@@ -1362,35 +1448,32 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
             </div>
           </div>
 
-          {/* Right: Accounting Posting Parameters (col 11-12) - Đã bỏ TK VAT và Thuế GTGT */}
-          <div className="col-span-12 xl:col-span-2 bg-white p-1.5 rounded border border-neutral-200 shadow-sm flex flex-col gap-1.5 self-start">
-            <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider pb-0.5 border-b border-neutral-100 flex items-center justify-between">
+          {/* Right: Accounting Posting Parameters (thu gọn, đồng bộ kích thước Mã NX và TK Nợ) */}
+          <div className="w-auto shrink-0 bg-white px-2.5 py-1.5 rounded border border-neutral-200 shadow-sm flex flex-col gap-1 self-start">
+            <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider pb-0.5 border-b border-neutral-100 flex items-center justify-between gap-2">
               <span>Định khoản</span>
               <SlidersHorizontal className="w-3 h-3 text-neutral-400" />
             </div>
             <div className="space-y-1">
-              <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center justify-between gap-2">
                 <label className="erp-label shrink-0 text-neutral-600">
                   Mã NX:
                 </label>
                 <input
-                  className={
-                    disabledLookupField +
-                    " w-16 text-center font-mono font-bold"
-                  }
+                  className="erp-input !w-16 shrink-0 text-center font-mono font-bold text-xs py-0.5 bg-neutral-100 border-neutral-200 text-neutral-800 cursor-text select-text"
                   value={maNx}
-                  disabled
+                  onFocus={(e) => e.currentTarget.select()}
                   readOnly
                 />
               </div>
-              <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center justify-between gap-2">
                 <label className="erp-label shrink-0 text-neutral-600">
                   TK Nợ:
                 </label>
                 <input
-                  className="erp-input w-16 text-center font-mono font-bold text-xs py-0.5 bg-neutral-100 border-neutral-200 text-primary-900 cursor-not-allowed"
+                  className="erp-input !w-16 shrink-0 text-center font-mono font-bold text-xs py-0.5 bg-neutral-100 border-neutral-200 text-primary-900 cursor-text select-text"
                   value={tk2}
-                  disabled
+                  onFocus={(e) => e.currentTarget.select()}
                   readOnly
                   title="Tài khoản Nợ cố định (1311)"
                 />
@@ -1427,17 +1510,6 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           {isEditable && (
             <button
               type="button"
-              onClick={handleRelookupPrices}
-              className="inline-flex items-center px-2 py-1 rounded bg-white border border-neutral-300 text-neutral-700 shadow-sm font-medium hover:border-secondary-400 hover:text-secondary-700 transition-colors text-xs"
-              title="Tra lại đơn giá cho các dòng đang trống (theo bảng giá BG/BG0)"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-secondary-600 mr-1" /> Tra
-              giá lại
-            </button>
-          )}
-          {isEditable && (
-            <button
-              type="button"
               onClick={() => handleDeleteItem(activeRowIndex)}
               disabled={items.length <= 1}
               className="inline-flex items-center px-2 py-1 rounded bg-white border border-neutral-300 text-neutral-700 shadow-sm font-medium hover:border-danger-400 hover:text-danger-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs"
@@ -1456,6 +1528,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         data-purpose="ledger-table-container"
       >
         <DetailGrid
+          gridRef={detailGridRef}
           items={items}
           currency={maTte}
           variant="form"

@@ -15,6 +15,14 @@ import { initCatalogCache, searchKho } from "../lib/catalogCache";
 import { AutocompleteOption } from "./ui/Autocomplete";
 import { VfpLookupCell, VfpNavDir } from "./ui/VfpLookupCell";
 import { Trash2 } from "lucide-react";
+import {
+  arrowDir,
+  caretToEndLater,
+  handleExcelMouseDown,
+  isPrintableKey,
+  selectAllLater,
+  useExcelCellMode,
+} from "./ui/excelCell";
 
 /** Kết quả tra giá trả về cho DetailGrid (đơn giá ngoại tệ + % chiết khấu). */
 export interface PriceLookupResult {
@@ -26,83 +34,171 @@ export interface PriceLookupResult {
 interface NumCellProps {
   value: number;
   disabled?: boolean;
+  /** Khi true: nếu value === 0 (hoặc không có giá trị) thì hiển thị trống (blank) thay vì "0.00". */
+  blankWhenZero?: boolean;
+  /** Định dạng số nguyên (không có phần thập phân .00). */
+  integerOnly?: boolean;
   className?: string;
   title?: string;
   onCommit: (v: number) => void;
   onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  /** Phím không thuộc điều hướng mũi tên (Enter / Tab / F8 ...). */
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /** Điều hướng bằng mũi tên (kiểu Excel). */
+  onNavigate?: (dir: VfpNavDir, el: HTMLInputElement) => void;
 }
 
 /**
- * Ô nhập số có định dạng 2 chữ số thập phân (xxx xxx xxx.00).
- * - Khi focus: hiện số thô để sửa, bôi đen toàn bộ.
- * - Khi rời ô / Enter: parse và commit giá trị số.
- * - Không có mũi tên tăng/giảm (dùng type=text + inputMode=decimal).
+ * Ô nhập số có định dạng 2 chữ số thập phân (xxx xxx xxx.00), hành vi kiểu Excel:
+ * - Click / mũi tên: chỉ CHỌN ô (không hiện con trỏ). Mũi tên luôn di chuyển ô.
+ * - Gõ phím: nhập đè toàn bộ nội dung (chế độ "enter": mũi tên = xác nhận + di chuyển).
+ * - F2 / double-click: sửa nội dung, con trỏ ở cuối chữ (← → di chuyển con trỏ).
+ * - Delete: xóa trắng ô (= 0). Esc: hủy nội dung đang sửa, quay về chế độ chọn.
+ * - Rời ô / Enter: parse và commit giá trị số.
  */
 const NumCell: React.FC<NumCellProps> = ({
   value,
   disabled,
+  blankWhenZero = false,
+  integerOnly = false,
   className,
   title,
   onCommit,
   onFocus,
   onKeyDown,
+  onNavigate,
 }) => {
-  const [text, setText] = useState<string | null>(null);
+  const [text, setTextState] = useState<string | null>(null);
+  // Bản đồng bộ của `text` để commit() không chạy 2 lần (mũi tên commit + blur).
+  const textRef = useRef<string | null>(null);
+  const setText = (t: string | null) => {
+    textRef.current = t;
+    setTextState(t);
+  };
+  const { mode, modeRef, setMode } = useExcelCellMode();
   // Cờ hủy: khi Esc -> không commit giá trị đang sửa (khôi phục giá trị cũ).
   const cancelRef = useRef(false);
-  const display = text !== null ? text : formatNumber2(value);
+  const formatVal = (v?: number | null) => {
+    if (blankWhenZero && (!v || Number(v) === 0)) return "";
+    if (integerOnly) {
+      if (v === null || v === undefined || isNaN(v)) return "0";
+      return Math.round(Number(v)).toString();
+    }
+    return formatNumber2(v);
+  };
+  const formatted = formatVal(value);
+  const display = text !== null ? text : formatted;
   const commit = () => {
     if (cancelRef.current) {
       cancelRef.current = false;
       setText(null);
       return;
     }
-    if (text !== null) {
-      onCommit(parseNumberInput(text));
+    if (textRef.current !== null) {
+      const t = textRef.current;
       setText(null);
+      const parsed = parseNumberInput(t);
+      onCommit(integerOnly ? Math.round(parsed) : parsed);
     }
   };
   // Vào chế độ SỬA: con trỏ ở cuối chữ (không bôi đen) — dùng cho double-click / F2.
   const enterEdit = (el: HTMLInputElement) => {
-    setText(formatNumber2(value));
-    window.setTimeout(() => {
-      if (document.activeElement === el) {
-        const n = el.value.length;
-        el.setSelectionRange(n, n);
-      }
-    }, 0);
+    setMode("edit");
+    setText(formatted);
+    caretToEndLater(el);
   };
   return (
     <input
       type="text"
-      inputMode="decimal"
+      inputMode={integerOnly ? "numeric" : "decimal"}
+      autoComplete="off"
+      spellCheck={false}
       value={display}
-      disabled={disabled}
+      disabled={false}
       readOnly={disabled}
+      tabIndex={disabled ? -1 : undefined}
+      data-readonly={disabled ? "true" : undefined}
+      data-optional={blankWhenZero ? "true" : undefined}
       title={title}
-      onChange={(e) => setText(e.target.value)}
+      data-mode={mode}
+      onChange={(e) => {
+        if (disabled) return;
+        if (modeRef.current === "select") setMode("enter");
+        let val = e.target.value;
+        if (integerOnly) {
+          val = val.replace(/[^\d\-]/g, "");
+        }
+        setText(val);
+      }}
+      onMouseDown={(e) => {
+        if (disabled) return;
+        handleExcelMouseDown(e, modeRef.current);
+      }}
       onFocus={(e) => {
-        // Kiểu Excel: chọn ô -> bôi đen toàn bộ (gõ đè thay thế, Delete xóa trắng).
-        setText(formatNumber2(value));
-        e.currentTarget.select();
+        if (disabled) {
+          onFocus?.(e);
+          return;
+        }
+        // Kiểu Excel: chọn ô -> bôi đen toàn bộ (gõ đè thay thế), chưa vào chế độ sửa.
+        setMode("select");
+        setText(null);
+        selectAllLater(e.currentTarget);
         onFocus?.(e);
       }}
-      onDoubleClick={(e) => enterEdit(e.currentTarget)}
-      onBlur={commit}
+      onDoubleClick={(e) => {
+        if (disabled) return;
+        enterEdit(e.currentTarget);
+      }}
+      onBlur={() => {
+        if (disabled) return;
+        commit();
+        setMode("select");
+      }}
       onKeyDown={(e) => {
+        if (disabled) return;
+        const m = modeRef.current;
+        const el = e.currentTarget;
+        const dir = arrowDir(e.key);
+        if (dir) {
+          // Chế độ sửa (F2): ← → di chuyển con trỏ trong chữ.
+          if (m === "edit" && (dir === "left" || dir === "right")) return;
+          e.preventDefault();
+          commit();
+          setMode("select");
+          onNavigate?.(dir, el);
+          return;
+        }
         if (e.key === "Enter") {
           commit();
+          setMode("select");
         } else if (e.key === "F2") {
           e.preventDefault();
-          enterEdit(e.currentTarget);
+          enterEdit(el);
           return;
         } else if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
-          cancelRef.current = true;
+          if (m !== "select") {
+            // Hủy nội dung đang nhập, ở lại ô (giống Excel).
+            setText(null);
+            setMode("select");
+            selectAllLater(el);
+          } else {
+            cancelRef.current = true;
+            setText(null);
+            el.blur();
+          }
+          return;
+        } else if (m === "select" && e.key === "Delete") {
+          // Delete ở chế độ chọn: xóa trắng ô.
+          e.preventDefault();
+          onCommit(0);
           setText(null);
-          e.currentTarget.blur();
+          selectAllLater(el);
+          return;
+        } else if (m === "select" && isPrintableKey(e)) {
+          // Gõ đè: nội dung đang bôi đen sẽ được thay bằng ký tự vừa gõ.
+          setMode("enter");
           return;
         }
         onKeyDown?.(e);
@@ -111,6 +207,10 @@ const NumCell: React.FC<NumCellProps> = ({
     />
   );
 };
+
+export interface DetailGridHandle {
+  focusMaVt: (rowIndex: number) => void;
+}
 
 interface DetailGridProps {
   items: VoucherDetail[];
@@ -132,6 +232,7 @@ interface DetailGridProps {
   onAddItem?: () => void;
   onValidationError?: (message: string | null) => void;
   firstMaVtRef?: React.RefObject<HTMLInputElement | null>;
+  gridRef?: React.RefObject<DetailGridHandle | null>;
   /**
    * Tra đơn giá bán & chiết khấu cho một mã vật tư (từ bảng giá VP_2014 BG/BG0).
    * Chỉ được gọi khi ô Đơn giá của dòng đang trống (khớp hành vi VFP).
@@ -152,6 +253,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   onAddItem,
   onValidationError,
   firstMaVtRef,
+  gridRef,
   onLookupPrice,
 }) => {
   const amber = "bg-amber-50 text-amber-900 border-amber-200";
@@ -182,18 +284,62 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   const itemsRef = useRef<VoucherDetail[]>(items);
   itemsRef.current = items;
 
-  // Khi tạo dòng mới (từ phím Enter tại ô TT hoặc nút Thêm dòng), tự động focus ngay vào ô Mã vật tư của dòng vừa tạo
+  // Cho phép component cha (VoucherForm) gọi trực tiếp để focus vào ô Mã vật tư của bất kỳ dòng nào (khi Ctrl +)
   useEffect(() => {
-    if (pendingFocusRowRef.current !== null) {
-      const targetIdx = pendingFocusRowRef.current;
-      const el = maVtInputRefs.current[targetIdx];
-      if (el) {
-        pendingFocusRowRef.current = null;
-        setTimeout(() => {
+    if (gridRef) {
+      (gridRef as React.MutableRefObject<DetailGridHandle | null>).current = {
+        focusMaVt: (rowIndex: number) => {
+          const doFocus = () => {
+            let el = maVtInputRefs.current[rowIndex];
+            if (!el && tableRef.current) {
+              const rows = tableRef.current.querySelectorAll("tbody tr");
+              if (rows[rowIndex]) {
+                el =
+                  rows[rowIndex].querySelector<HTMLInputElement>(
+                    "input[data-vfp-lookup='true']",
+                  ) || rows[rowIndex].querySelector<HTMLInputElement>("input");
+              }
+            }
+            if (el) {
+              el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+              el.focus();
+              el.select();
+            }
+          };
+          doFocus();
+          setTimeout(doFocus, 25);
+        },
+      };
+    }
+    return () => {
+      if (gridRef) {
+        (gridRef as React.MutableRefObject<DetailGridHandle | null>).current =
+          null;
+      }
+    };
+  }, [gridRef]);
+
+  const prevItemsLenRef = useRef<number>(items.length);
+
+  // Khi tạo dòng mới (từ phím Enter tại ô TT, Ctrl++, hoặc nút Thêm dòng), tự động focus ngay vào ô Mã vật tư của dòng vừa tạo
+  useEffect(() => {
+    const prevLen = prevItemsLenRef.current;
+    prevItemsLenRef.current = items.length;
+    const targetIdx =
+      pendingFocusRowRef.current !== null
+        ? pendingFocusRowRef.current
+        : items.length > prevLen
+          ? items.length - 1
+          : null;
+    if (targetIdx !== null) {
+      pendingFocusRowRef.current = null;
+      setTimeout(() => {
+        const el = maVtInputRefs.current[targetIdx];
+        if (el) {
           el.focus();
           el.select();
-        }, 20);
-      }
+        }
+      }, 20);
     }
   }, [items.length]);
 
@@ -221,14 +367,16 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       return `Dòng ${rowIdx + 1}: Vui lòng chọn hoặc nhập Mã kho!`;
     }
 
-    // Kiểm tra có ô input nào trong dòng bị xóa trắng không
+    // Kiểm tra có ô input bắt buộc nào trong dòng bị xóa trắng không (trừ ô Chiết khấu được phép trống = 0)
     if (trEl) {
       const rowInputs = Array.from(
-        trEl.querySelectorAll<HTMLInputElement>("input"),
+        trEl.querySelectorAll<HTMLInputElement>(
+          "input:not([data-optional='true'])",
+        ),
       );
       for (const inp of rowInputs) {
         if (inp.value.trim() === "") {
-          return `Dòng ${rowIdx + 1}: Không được để trống bất kỳ ô nào trong dòng!`;
+          return `Dòng ${rowIdx + 1}: Không được để trống bất kỳ ô bắt buộc nào trong dòng!`;
         }
       }
     }
@@ -266,6 +414,41 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     fromRowIdx: number,
     trEl?: HTMLTableRowElement | null,
   ) => {
+    const it = items[fromRowIdx];
+    const hasMaVt = Boolean(it && it.ma_vt && it.ma_vt.trim());
+    const sl = Number(it?.so_luong9 ?? it?.so_luong ?? 0);
+    const hasQty = !isNaN(sl) && sl > 0;
+
+    // Nếu chưa có mã hàng hóa hoặc số lượng bằng 0 (<= 0):
+    // không thông báo nữa mà để khách hàng chạy loop mãi ở dòng đó nếu enter liên tục.
+    if (!hasMaVt || !hasQty) {
+      onValidationError?.(null);
+      if (trEl) {
+        const inputs = getRowInputs(trEl);
+        if (inputs.length > 0) {
+          inputs[0].focus();
+          inputs[0].select();
+          return;
+        }
+      }
+      const currentMaVt = maVtInputRefs.current[fromRowIdx];
+      if (currentMaVt) {
+        currentMaVt.focus();
+        currentMaVt.select();
+      }
+      return;
+    }
+
+    // Nếu đang ở dòng trước (không phải dòng cuối) và đã có dòng kế tiếp, nhảy sang dòng kế tiếp
+    if (fromRowIdx < items.length - 1) {
+      const nextMaVt = maVtInputRefs.current[fromRowIdx + 1];
+      if (nextMaVt) {
+        nextMaVt.focus();
+        nextMaVt.select();
+        return;
+      }
+    }
+
     const err = validateRow(fromRowIdx, trEl);
     if (err) {
       onValidationError?.(err);
@@ -396,7 +579,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       {
         ...afterPrice,
         gia_nt9: price.gia_nt9,
-        chiet_khau: price.chiet_khau,
+        chiet_khau: Math.round(price.chiet_khau || 0),
         gia_tb_tt: "C",
       },
       "GIA_NT9",
@@ -404,24 +587,24 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   };
 
   // ===== Điều hướng ô trong grid (mô phỏng VFP) =====
-  // Danh sách ô nhập được (có class grid-cell-input, không disabled) theo thứ tự DOM.
+  // Danh sách ô nhập được (có class grid-cell-input, không disabled/readonly) theo thứ tự DOM.
   const getGridInputs = (el: HTMLElement): HTMLInputElement[] => {
     const table = el.closest("table");
     if (!table) return [];
     return Array.from(
       table.querySelectorAll<HTMLInputElement>(
-        "input.grid-cell-input:not([disabled])",
+        "input.grid-cell-input:not([disabled]):not([data-readonly='true'])",
       ),
     );
   };
 
-  // Danh sách ô nhập được (có class grid-cell-input, không disabled) TRONG CÙNG MỘT DÒNG.
+  // Danh sách ô nhập được (có class grid-cell-input, không disabled/readonly) TRONG CÙNG MỘT DÒNG.
   const getRowInputs = (el: HTMLElement): HTMLInputElement[] => {
     const tr = el.closest("tr");
     if (!tr) return [];
     return Array.from(
       tr.querySelectorAll<HTMLInputElement>(
-        "input.grid-cell-input:not([disabled])",
+        "input.grid-cell-input:not([disabled]):not([data-readonly='true'])",
       ),
     );
   };
@@ -472,7 +655,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       if (cellIdx < 0) return;
       const targetCell = targetRow.children[cellIdx] as HTMLElement | undefined;
       const targetInput = targetCell?.querySelector<HTMLInputElement>(
-        "input.grid-cell-input:not([disabled])",
+        "input.grid-cell-input:not([disabled]):not([data-readonly='true'])",
       );
       if (targetInput) {
         targetInput.focus();
@@ -497,7 +680,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       if (cellIdx < 0) return;
       const targetCell = targetRow.children[cellIdx] as HTMLElement | undefined;
       const targetInput = targetCell?.querySelector<HTMLInputElement>(
-        "input.grid-cell-input:not([disabled])",
+        "input.grid-cell-input:not([disabled]):not([data-readonly='true'])",
       );
       if (targetInput) {
         targetInput.focus();
@@ -521,9 +704,10 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     el: HTMLInputElement,
     rowIdx: number,
   ) => {
-    // ← / → : di chuyển ngang, giới hạn trong cùng một dòng.
+    // ← / → : di chuyển ngang 1 ô, giới hạn trong cùng một dòng (kiểu Excel:
+    // ô tự quyết định khi nào phát lệnh left/right, nên ở đây luôn nhảy ô).
     if (dir === "left" || dir === "right") {
-      navigateCellInRow(dir, el);
+      navigateCellInRow(dir === "left" ? "prev" : "next", el);
       return;
     }
     // Shift+Tab: lùi ô, ở đầu dòng thì sang dòng kề.
@@ -559,16 +743,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       return;
     }
 
-    // F2: vào chế độ SỬA -> con trỏ ở cuối chữ (giống Excel).
-    if (e.key === "F2") {
-      e.preventDefault();
-      const el = e.currentTarget;
-      const n = el.value.length;
-      el.setSelectionRange(n, n);
-      return;
-    }
-
-    // Esc: thoát ô (bỏ chọn), giống Excel.
+    // Esc: thoát ô (bỏ chọn).
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -576,29 +751,11 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       return;
     }
 
-    // Mũi tên Lên/Xuống: di chuyển giữa các DÒNG (giữ nguyên cột).
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    // Mũi tên (ô chỉ-chọn như TT): luôn di chuyển ô, kiểu Excel.
+    const dir = arrowDir(e.key);
+    if (dir) {
       e.preventDefault();
-      navigateCell(e.key === "ArrowDown" ? "down" : "up", e.currentTarget);
-      return;
-    }
-
-    // Mũi tên Trái/Phải: di chuyển NGANG trong cùng một dòng.
-    // Chỉ nhảy ô khi con trỏ đã ở đầu/cuối chữ; nếu đang ở giữa chữ thì để
-    // trình duyệt di chuyển con trỏ bình thường (không preventDefault).
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      const el = e.currentTarget;
-      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
-      const atEnd =
-        el.selectionStart === el.value.length &&
-        el.selectionEnd === el.value.length;
-      if (
-        (e.key === "ArrowLeft" && atStart) ||
-        (e.key === "ArrowRight" && atEnd)
-      ) {
-        e.preventDefault();
-        navigateCellInRow(e.key === "ArrowLeft" ? "left" : "right", el);
-      }
+      handleCellNavigate(dir, e.currentTarget, rowIdx);
       return;
     }
 
@@ -638,7 +795,9 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
         <div className="overflow-auto flex-1">
           <table
             ref={tableRef}
-            className="w-full text-left dense-table border-collapse text-[11.5px]"
+            className={`w-full text-left dense-table border-collapse text-[11.5px] ${
+              editable ? "xl-grid" : ""
+            }`}
           >
             <thead className="sticky top-0 z-10 bg-neutral-100 text-neutral-600 font-semibold text-[11px] uppercase tracking-wide select-none border-b border-neutral-300">
               <tr className="divide-x divide-neutral-200">
@@ -723,17 +882,12 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                       <tr
                         key={it.stt0 || idx}
                         onClick={() => onSelectRow?.(idx)}
-                        className={`divide-x divide-neutral-200 transition-colors ${
-                          isActive
-                            ? "bg-primary-50/50 ring-1 ring-inset ring-primary-500"
-                            : "hover:bg-neutral-50"
-                        }`}
+                        className={isActive ? "xl-row-active" : undefined}
                       >
-                        <td className="py-0.5 text-center font-sans text-neutral-400 font-medium">
-                          {idx + 1}
-                        </td>
+                        {/* Số dòng (kiểu tiêu đề dòng Excel) */}
+                        <td className="xl-rowhead">{idx + 1}</td>
                         {/* Mã vật tư */}
-                        <td className="p-0.5">
+                        <td className="xl-cell">
                           <VfpLookupCell
                             inputRef={(el) => {
                               maVtInputRefs.current[idx] = el;
@@ -768,60 +922,75 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocusRow={() => onSelectRow?.(idx)}
                             fetcher={fetchVatTuOptions}
-                            placeholder="Mã VT..."
                             debounceMs={30}
                             maxResults={30}
                             dropdownMinWidth={420}
-                            className="h-6 px-1.5 py-0.5 text-xs font-mono font-bold text-primary-800 uppercase bg-white border border-neutral-300 rounded focus:border-primary-500 grid-cell-input"
+                            className="xl-input font-mono font-bold text-primary-800 uppercase grid-cell-input"
                           />
                         </td>
-                        {/* Tên vật tư (Disabled) */}
-                        <td className="p-0.5">
+                        {/* Tên vật tư (chỉ đọc — click chọn/copy được) */}
+                        <td className="xl-ro min-w-[200px] max-w-[320px]">
                           <input
                             type="text"
+                            readOnly
+                            tabIndex={-1}
+                            data-readonly="true"
                             value={it.ten_vt || ""}
-                            disabled
-                            readOnly
-                            tabIndex={-1}
-                            className="w-full px-1.5 py-0.5 text-xs font-sans text-neutral-700 bg-neutral-100 border border-neutral-200 rounded truncate cursor-not-allowed"
                             title={it.ten_vt || ""}
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            className="xl-ro-input font-sans text-neutral-700 truncate"
                           />
                         </td>
-                        {/* Đvt (Disabled theo yêu cầu) */}
-                        <td className="p-0.5">
+                        {/* Đvt (chỉ đọc — click chọn/copy được) */}
+                        <td className="xl-ro">
                           <input
                             type="text"
+                            readOnly
+                            tabIndex={-1}
+                            data-readonly="true"
                             value={it.dvt || ""}
-                            disabled
-                            readOnly
-                            tabIndex={-1}
-                            className="w-full px-1 py-0.5 text-xs text-center font-sans text-neutral-600 bg-neutral-100 border border-neutral-200 rounded cursor-not-allowed"
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            className="xl-ro-input text-center font-sans"
                           />
                         </td>
-                        {/* Số lượng (Disabled theo yêu cầu) */}
-                        <td className="p-0.5">
+                        {/* Số lượng (chỉ đọc — click chọn/copy được) */}
+                        <td className="xl-ro">
                           <input
                             type="text"
+                            readOnly
+                            tabIndex={-1}
+                            data-readonly="true"
                             value={formatNumber2(it.so_luong9 ?? 0)}
-                            disabled
-                            readOnly
-                            tabIndex={-1}
-                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold bg-neutral-100 text-neutral-600 border border-neutral-200 rounded cursor-not-allowed"
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            className="xl-ro-input text-right font-bold"
                           />
                         </td>
-                        {/* TK Có (Disabled theo yêu cầu) */}
-                        <td className="p-0.5">
+                        {/* TK Có (chỉ đọc — click chọn/copy được) */}
+                        <td className="xl-ro">
                           <input
                             type="text"
-                            value={it.tk_du2 || it.tk_du || "5111"}
-                            disabled
                             readOnly
                             tabIndex={-1}
-                            className="w-full px-1 py-0.5 text-xs text-center font-semibold text-primary-700 bg-neutral-100 border border-neutral-200 rounded cursor-not-allowed"
+                            data-readonly="true"
+                            value={it.tk_du2 || it.tk_du || "5111"}
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            className="xl-ro-input text-center font-semibold text-primary-700"
                           />
                         </td>
                         {/* Kho (VfpLookupCell DmKho) */}
-                        <td className="p-0.5">
+                        <td className="xl-cell">
                           <VfpLookupCell
                             value={it.ma_kho || ""}
                             onValueChange={(val) =>
@@ -853,13 +1022,12 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocusRow={() => onSelectRow?.(idx)}
                             fetcher={fetchKhoOptionsLocal}
-                            placeholder="Mã kho..."
                             dropdownMinWidth={300}
-                            className="h-6 px-1 py-0.5 text-xs text-center font-mono font-semibold text-neutral-800 bg-white border border-neutral-300 rounded uppercase focus:border-primary-500 grid-cell-input"
+                            className="xl-input text-center font-mono font-semibold text-neutral-800 uppercase grid-cell-input"
                           />
                         </td>
                         {/* Số tấm */}
-                        <td className={`p-0.5 ${amber}`}>
+                        <td className="xl-cell xl-amber">
                           <NumCell
                             value={it.so_tam ?? 0}
                             onCommit={(v) =>
@@ -871,11 +1039,18 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className="w-full px-1.5 py-0.5 text-xs text-right font-semibold text-amber-950 bg-amber-50/80 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input"
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            className="xl-input text-right font-semibold text-amber-950 grid-cell-input"
                           />
                         </td>
                         {/* Hệ số (Loại 4: khóa, luôn = 1) */}
-                        <td className={`p-0.5 ${amber}`}>
+                        <td
+                          className={`xl-cell xl-amber ${
+                            it.loai_vt === "4" ? "xl-locked" : ""
+                          }`}
+                        >
                           <NumCell
                             value={it.he_so8 ?? 1}
                             disabled={it.loai_vt === "4"}
@@ -893,26 +1068,29 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className={`w-full px-1 py-0.5 text-xs text-right font-medium text-amber-950 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input ${
-                              it.loai_vt === "4"
-                                ? "bg-amber-100/60 cursor-not-allowed"
-                                : "bg-amber-50/80"
-                            }`}
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            className="xl-input text-right font-medium text-amber-950 grid-cell-input"
                           />
                         </td>
-                        {/* SL bán (Disabled / ReadOnly) */}
-                        <td className={`p-0.5 ${amber}`}>
+                        {/* SL bán (chỉ đọc — click chọn/copy được) */}
+                        <td className="xl-ro xl-amber">
                           <input
                             type="text"
-                            value={formatNumber2(it.so_luong8 ?? 0)}
-                            disabled
                             readOnly
                             tabIndex={-1}
-                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold text-amber-950 bg-amber-100/50 border border-amber-200 rounded cursor-not-allowed"
+                            data-readonly="true"
+                            value={formatNumber2(it.so_luong8 ?? 0)}
+                            onFocus={(e) => {
+                              onSelectRow?.(idx);
+                              e.currentTarget.select();
+                            }}
+                            className="xl-ro-input text-right font-bold text-amber-950"
                           />
                         </td>
                         {/* Đơn giá */}
-                        <td className="p-0.5">
+                        <td className="xl-cell">
                           <NumCell
                             value={it.gia_nt9 ?? 0}
                             onCommit={(v) =>
@@ -924,11 +1102,14 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className="w-full px-1.5 py-0.5 text-xs text-right font-medium text-neutral-800 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            className="xl-input text-right font-medium text-neutral-800 grid-cell-input"
                           />
                         </td>
                         {/* Thành tiền */}
-                        <td className="p-0.5">
+                        <td className="xl-cell">
                           <NumCell
                             value={it.tien_nt9 ?? 0}
                             onCommit={(v) =>
@@ -940,50 +1121,61 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className="w-full px-1.5 py-0.5 text-xs text-right font-bold text-neutral-900 bg-neutral-50 border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            className="xl-input text-right font-bold text-neutral-900 grid-cell-input"
                           />
                         </td>
                         {/* CK % */}
-                        <td className="p-0.5">
+                        <td className="xl-cell">
                           <NumCell
-                            value={it.chiet_khau ?? 0}
+                            value={Math.round(it.chiet_khau ?? 0)}
+                            blankWhenZero
+                            integerOnly
                             onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                { ...it, chiet_khau: v },
+                                { ...it, chiet_khau: Math.round(v) },
                                 "CHIET_KHAU",
                               )
                             }
                             onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className="w-full px-1 py-0.5 text-xs text-center font-medium text-neutral-700 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            className="xl-input text-center font-medium text-neutral-700 grid-cell-input"
                           />
                         </td>
-                        {/* TT: luôn cố định là "C", bấm Enter tại ô này sẽ kiểm tra dòng và tạo dòng mới */}
-                        <td className="p-0.5">
+                        {/* TT: luôn cố định là "C" (ô chỉ-chọn), bấm Enter tại ô này sẽ kiểm tra dòng và tạo dòng mới */}
+                        <td className="xl-cell">
                           <input
                             type="text"
                             value="C"
                             readOnly
+                            data-mode="select"
+                            onMouseDown={(e) => handleExcelMouseDown(e, "select")}
                             onFocus={(e) => {
                               onSelectRow?.(idx);
-                              e.currentTarget.select();
+                              selectAllLater(e.currentTarget);
                             }}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, true)}
                             title="Cố định là C — Bấm Enter để tạo dòng mới"
-                            className="w-full px-1 py-0.5 text-xs text-center font-bold text-success-700 bg-success-50/50 border border-neutral-300 rounded focus:border-primary-500 focus:ring-1 focus:ring-primary-500 uppercase grid-cell-input cursor-default"
+                            className="xl-input text-center font-bold text-success-700 uppercase grid-cell-input"
                           />
                         </td>
-                        <td className="py-0.5 text-center">
+                        <td className="xl-ro text-center !px-0">
                           <button
                             type="button"
+                            tabIndex={-1}
                             onClick={(e) => {
                               e.stopPropagation();
                               onDeleteItem?.(idx);
                             }}
                             disabled={items.length <= 1}
                             title="Xóa dòng (F8)"
-                            className="p-1 text-neutral-400 hover:text-danger-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="p-0.5 text-neutral-400 hover:text-danger-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5 mx-auto" />
                           </button>
@@ -1038,7 +1230,9 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                         {formatCurrency(it.tien_nt9, currency)}
                       </td>
                       <td className="py-1 text-center font-sans text-neutral-400">
-                        {formatQuantity(it.chiet_khau)}
+                        {it.chiet_khau && Number(it.chiet_khau) !== 0
+                          ? Math.round(Number(it.chiet_khau))
+                          : ""}
                       </td>
                       <td className="py-1 text-center font-bold text-success-700 font-sans">
                         C
