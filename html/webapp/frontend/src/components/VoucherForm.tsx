@@ -23,6 +23,7 @@ import {
   getBoPhan,
 } from "../lib/catalogCache";
 import { calcLoai2Item, calcVoucherTotals } from "../lib/calc";
+import { isModalOpen, useModalLock } from "../lib/modalLock";
 import {
   Printer,
   CreditCard,
@@ -104,7 +105,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const isEditable = isCreate || isEdit;
 
   // Refs for sequential focus & Enter navigation:
-  // Mã đối tượng -> Diễn giải -> Mã xe -> Chọn phiếu xuất
+  // Ngày -> Số phiếu -> Mã đối tượng -> Diễn giải -> Mã xe -> Chọn phiếu xuất
+  const ngayCtInputRef = useRef<HTMLInputElement | null>(null);
+  const soCtInputRef = useRef<HTMLInputElement | null>(null);
   const maDtInputRef = useRef<HTMLInputElement | null>(null);
   const dienGiaiInputRef = useRef<HTMLInputElement | null>(null);
   const maXeInputRef = useRef<HTMLInputElement | null>(null);
@@ -179,6 +182,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const [maDtGtGt, setMaDtGtGt] = useState<string>(
     voucher?.ma_dtgtgt || initialInherited?.ma_dtgtgt || "",
   );
+  // Mã vùng/khu vực của khách hàng (DmDt.Ma_Vm) — hiển thị trên header.
+  const [maVm, setMaVm] = useState<string>("");
   const [showAccountPicker, setShowAccountPicker] = useState<boolean>(false);
 
   // Detail Items State
@@ -230,6 +235,13 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     message: string;
     tone: "danger" | "warning";
   } | null>(null);
+  // Chỉ kiểm tra hạn nợ SAU khi người dùng chọn khách hàng / Enter.
+  // Khi tạo mới (mã KH kế thừa từ đơn đang xem) thì KHÔNG kiểm tra ngay.
+  const [debtCheckArmed, setDebtCheckArmed] = useState<boolean>(!isCreate);
+  const debtDialogRef = useRef<HTMLDivElement | null>(null);
+  const accountPickerRef = useRef<HTMLDivElement | null>(null);
+  useModalLock(!!debtDialog, debtDialogRef);
+  useModalLock(showAccountPicker, accountPickerRef);
 
   // 0a. Nạp danh mục khách hàng (RAM) + index vật tư (Web Worker) + danh mục nhỏ
   //     (kho/xe/bộ phận/tài khoản) một lần khi mở form.
@@ -326,6 +338,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       if (cust.ma_bp) setMaBp(cust.ma_bp);
       if (cust.ten_bp) setTenBp(cust.ten_bp);
       if (cust.ms_thue) setMaDtGtGt(cust.ms_thue);
+      setMaVm(cust.ma_vm || "");
     };
     enrichFromMaDt();
     return () => {
@@ -415,6 +428,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   const lastDebtWarnRef = useRef<string>("");
   useEffect(() => {
     if (!debtInfo || !maDt) return;
+    // Chưa "kích hoạt" kiểm tra (tạo mới, chưa chọn khách) -> không cảnh báo.
+    if (!debtCheckArmed) return;
     const key = `${maDt}|${debtInfo.is_over_limit}|${debtInfo.is_near_limit}`;
     if (lastDebtWarnRef.current === key) return;
     lastDebtWarnRef.current = key;
@@ -440,7 +455,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
           `Ngưỡng cảnh báo: ${fmt(debtInfo.toi_han)}`,
       });
     }
-  }, [debtInfo, maDt]);
+  }, [debtInfo, maDt, debtCheckArmed]);
 
   // Handle Customer Selection -> tự động điền Tên KH, Ông/Bà (từ Doi_Tac hoặc Ten_Dt), Địa chỉ, Mã bộ phận, Tên bộ phận
   const [maDtError, setMaDtError] = useState<string | null>(null);
@@ -450,6 +465,8 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       setMaDtError(null);
       return;
     }
+    // Người dùng đã chọn/Enter khách hàng -> bật kiểm tra hạn nợ.
+    setDebtCheckArmed(true);
     // RAM-only: chờ lần nạp danh mục đầu tiên (đã khởi động từ app) rồi tra trong RAM.
     await initCustomerIndex();
     const cust = getCustomer(raw);
@@ -473,6 +490,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
         setTenXe("");
       }
       setMaDtGtGt(cust.ms_thue || "");
+      setMaVm(cust.ma_vm || "");
     } else {
       // Không tìm thấy mã khách trong DmDt -> giữ nguyên chuỗi để người dùng sửa,
       // đánh dấu lỗi và chặn Lưu (khớp hành vi VFP: Ma_Dt phải là mã hợp lệ).
@@ -483,17 +501,38 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
     }
   };
 
-  // Handle Xe Selection -> tự động điền Mã xe và Biển số (Ten_Xe)
+  // Handle Xe Selection -> tự động điền Mã xe và Biển số (Ten_Xe).
+  // - Để trống: KHÔNG tự chọn (xóa cả mã lẫn tên).
+  // - Có gõ mã: lấy mã khớp chính xác; nếu không, lấy mã ĐẦU TIÊN tìm thấy; nếu vẫn không có -> null.
   const handleSelectXe = async (selectedMaXe: string, hintTenXe?: string) => {
-    const cleanXe = selectedMaXe.trim().toUpperCase();
-    setMaXe(cleanXe);
+    const cleanXe = (selectedMaXe || "").trim().toUpperCase();
+    if (!cleanXe) {
+      setMaXe("");
+      setTenXe("");
+      return;
+    }
     if (hintTenXe) {
+      setMaXe(cleanXe);
       setTenXe(hintTenXe);
       return;
     }
     await initCatalogCache();
     const cached = getXe(cleanXe);
-    setTenXe(cached?.ten_xe || "");
+    if (cached) {
+      setMaXe(cached.ma_xe);
+      setTenXe(cached.ten_xe || "");
+      return;
+    }
+    // Không khớp chính xác -> lấy mã đầu tiên tìm thấy.
+    const first = searchXe(cleanXe)[0];
+    if (first) {
+      setMaXe(first.value);
+      setTenXe(first.hint || "");
+      return;
+    }
+    // Không tìm thấy -> fallback null.
+    setMaXe("");
+    setTenXe("");
   };
 
   // Fetcher cho ô Mã xe: RAM-only (chờ lần nạp đầu tiên rồi tra RAM).
@@ -795,6 +834,9 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
   // Keyboard shortcut listener for Ctrl+Enter / Esc / F8 / F4
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Khi có dialog đang mở (PickupDialog / DebtPanel / ...) -> khóa cứng,
+      // không cho ESC/Ctrl+Enter/F8/F4 thoát ra ngoài form.
+      if (isModalOpen()) return;
       if (e.ctrlKey && e.key === "Enter") {
         e.preventDefault();
         handleSave();
@@ -807,6 +849,22 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       } else if (e.key === "F4" && isEditable) {
         e.preventDefault();
         setShowAccountPicker(true);
+      } else if (
+        isEditable &&
+        e.ctrlKey &&
+        (e.code === "NumpadAdd" || e.key === "+")
+      ) {
+        // Ctrl + (numpad) = thêm dòng
+        e.preventDefault();
+        handleAddItem();
+      } else if (
+        isEditable &&
+        e.ctrlKey &&
+        (e.code === "NumpadSubtract" || e.key === "-")
+      ) {
+        // Ctrl - (numpad) = xóa dòng đang chọn
+        e.preventDefault();
+        handleDeleteItem(activeRowIndex);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -942,10 +1000,18 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 </label>
                 {isEditable ? (
                   <input
+                    ref={ngayCtInputRef}
                     type="date"
                     className="erp-input w-32 text-xs py-0.5 font-mono font-semibold"
                     value={ngayCt}
                     onChange={(e) => setNgayCt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        soCtInputRef.current?.focus();
+                        soCtInputRef.current?.select();
+                      }
+                    }}
                   />
                 ) : (
                   <input
@@ -962,10 +1028,18 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 </label>
                 {isEditable ? (
                   <input
+                    ref={soCtInputRef}
                     className="erp-input w-28 font-mono font-bold text-primary-700 bg-white border-primary-300 uppercase tracking-wide text-xs py-0.5"
                     value={soCt}
                     onChange={(e) => setSoCt(e.target.value)}
                     onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        maDtInputRef.current?.focus();
+                        maDtInputRef.current?.select();
+                      }
+                    }}
                     placeholder="Tự động cấp số"
                   />
                 ) : (
@@ -977,47 +1051,24 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                 )}
               </div>
 
-              {/* Financial Credit Health Monitor */}
+              {/* Financial Credit Health Monitor: Ma_Vm + Giới hạn nợ */}
               <div className="flex items-center gap-2 ml-auto bg-white py-0.5 px-2.5 rounded border border-neutral-200 shadow-sm text-xs">
                 <div className="flex items-center gap-1">
                   <span className="text-neutral-500 font-medium text-[11px]">
-                    Hạn TT:
+                    Ma_Vm:
                   </span>
-                  {isEditable ? (
-                    <input
-                      type="number"
-                      className="erp-input w-14 font-mono font-semibold text-neutral-800 text-[11px] py-0 text-center"
-                      value={hanTt}
-                      onChange={(e) => setHanTt(parseInt(e.target.value) || 0)}
-                      onFocus={(e) => e.currentTarget.select()}
-                    />
-                  ) : (
-                    <span className="font-mono font-semibold text-neutral-800 text-[11px]">
-                      {hanTt || 0} ngày
-                    </span>
-                  )}
+                  <span className="inline-flex items-center px-1.5 rounded text-[11px] font-mono font-bold bg-secondary-50 text-secondary-700 border border-secondary-200 min-w-[40px] justify-center">
+                    {maVm || "—"}
+                  </span>
                 </div>
                 <span className="text-neutral-300">|</span>
                 <div className="flex items-center gap-1">
                   <span className="text-neutral-500 font-medium text-[11px]">
-                    Tỷ giá:
+                    Giới hạn nợ:
                   </span>
-                  {isEditable ? (
-                    <input
-                      type="number"
-                      step="any"
-                      className="erp-input w-14 font-mono font-bold text-tertiary-600 text-[11px] py-0 text-center"
-                      value={tyGia}
-                      onChange={(e) =>
-                        setTyGia(parseFloat(e.target.value) || 1.0)
-                      }
-                      onFocus={(e) => e.currentTarget.select()}
-                    />
-                  ) : (
-                    <span className="font-mono font-bold text-tertiary-600 text-[11px]">
-                      {tyGia}
-                    </span>
-                  )}
+                  <span className="font-mono font-bold text-tertiary-600 text-[11px]">
+                    {debtInfo ? formatCurrency(debtInfo.gioi_han) : "—"}
+                  </span>
                 </div>
                 <span className="text-neutral-300">|</span>
                 <div className="flex items-center gap-1">
@@ -1117,6 +1168,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     openOnTypeOnly
                     debounceMs={30}
                     maxResults={30}
+                    dropdownMinWidth={560}
                     className={`font-mono font-bold uppercase ${
                       maDtError
                         ? "text-danger-700 border-danger-400 bg-danger-50"
@@ -1243,13 +1295,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                     value={maXe || ""}
                     onChange={(val) => setMaXe(val)}
                     onSelect={(opt) => handleSelectXe(opt.value, opt.hint)}
-                    onBlur={() => {
-                      if (maXe.trim()) {
-                        handleSelectXe(maXe);
-                      } else {
-                        setTenXe("");
-                      }
-                    }}
+                    onBlur={() => handleSelectXe(maXe)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -1260,6 +1306,10 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                       }
                     }}
                     fetcher={fetchXeOptionsLocal}
+                    openOnTypeOnly
+                    debounceMs={30}
+                    maxResults={30}
+                    dropdownMinWidth={360}
                     placeholder="Mã xe..."
                     className="font-mono font-semibold text-neutral-800 uppercase"
                   />
@@ -1338,15 +1388,11 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
                   TK Nợ:
                 </label>
                 <input
-                  className={`erp-input w-16 text-center font-mono font-bold text-xs py-0.5 ${
-                    isEditable
-                      ? "bg-white border-neutral-300 text-primary-900"
-                      : "bg-tertiary-50/70 border-tertiary-300 text-primary-900 cursor-default"
-                  }`}
+                  className="erp-input w-16 text-center font-mono font-bold text-xs py-0.5 bg-neutral-100 border-neutral-200 text-primary-900 cursor-not-allowed"
                   value={tk2}
-                  onChange={(e) => setTk2(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  readOnly={!isEditable}
+                  disabled
+                  readOnly
+                  title="Tài khoản Nợ cố định (1311)"
                 />
               </div>
             </div>
@@ -1527,12 +1573,13 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       {/* Debt Warning Dialog */}
       {debtDialog && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded shadow-2xl border border-neutral-300 w-[420px] overflow-hidden animate-in fade-in zoom-in-95">
+          <div
+            ref={debtDialogRef}
+            className="bg-white rounded shadow-2xl border border-neutral-300 w-[420px] overflow-hidden animate-in fade-in zoom-in-95"
+          >
             <div
               className={`px-3.5 py-2 flex items-center justify-between text-white ${
-                debtDialog.tone === "danger"
-                  ? "bg-danger-700"
-                  : "bg-amber-600"
+                debtDialog.tone === "danger" ? "bg-danger-700" : "bg-amber-600"
               }`}
             >
               <span className="font-bold text-xs uppercase tracking-wide flex items-center gap-2">
@@ -1557,6 +1604,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
             <div className="bg-neutral-100 px-3 py-2 flex justify-end border-t border-neutral-200">
               <button
                 type="button"
+                data-autofocus
                 onClick={() => setDebtDialog(null)}
                 className="px-4 py-1.5 bg-primary-700 hover:bg-primary-800 text-white rounded text-xs font-semibold cursor-pointer"
               >
@@ -1570,7 +1618,10 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
       {/* Account Picker Modal (F4) */}
       {showAccountPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded shadow-2xl border border-neutral-300 w-96 overflow-hidden animate-in fade-in zoom-in-95">
+          <div
+            ref={accountPickerRef}
+            className="bg-white rounded shadow-2xl border border-neutral-300 w-96 overflow-hidden animate-in fade-in zoom-in-95"
+          >
             <div className="bg-primary-800 text-white px-3.5 py-2 flex items-center justify-between">
               <span className="font-bold text-xs uppercase tracking-wide">
                 F4: Chọn tài khoản
@@ -1613,6 +1664,7 @@ export const VoucherForm: React.FC<VoucherFormProps> = ({
             <div className="bg-neutral-100 px-3 py-1.5 flex justify-end border-t border-neutral-200">
               <button
                 type="button"
+                data-autofocus
                 onClick={() => setShowAccountPicker(false)}
                 className="px-3 py-1 bg-white border border-neutral-300 rounded text-xs font-medium hover:bg-neutral-50 cursor-pointer"
               >

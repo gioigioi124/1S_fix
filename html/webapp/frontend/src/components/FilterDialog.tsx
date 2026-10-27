@@ -27,7 +27,9 @@ export const FilterDialog: React.FC<FilterDialogProps> = ({
   onApply,
 }) => {
   const [form, setForm] = useState<VoucherFilterParams>({ ...filters });
-  const [tienTeList, setTienTeList] = useState<{ ma_tte: string; ten_tte?: string }[]>([]);
+  const [tienTeList, setTienTeList] = useState<
+    { ma_tte: string; ten_tte?: string }[]
+  >([]);
 
   useEffect(() => {
     setForm({ ...filters });

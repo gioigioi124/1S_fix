@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "./ui/Button";
 import { PickupSlip, PickupItem } from "../types/pickup";
 import { formatQuantity, formatDate } from "../lib/format";
+import { useModalLock } from "../lib/modalLock";
 import { Check, X, Minus, Square, RefreshCw } from "lucide-react";
 
 interface PickupDialogProps {
@@ -32,10 +33,18 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
   const [activeItems, setActiveItems] = useState<PickupItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  // Tăng mỗi lần nạp lại danh sách phiếu -> buộc nạp lại chi tiết kể cả khi
+  // activeStt không đổi (dialog luôn mounted nên state cũ vẫn còn).
+  const [detailVersion, setDetailVersion] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // Khóa modal: giữ focus trong dialog + báo tầng ngoài (VoucherForm/App) khóa phím.
+  useModalLock(isOpen, containerRef);
 
   // Fetch slips
   const loadSlips = useCallback(async () => {
     setLoading(true);
+    // Xóa chi tiết cũ ngay để không hiển thị dữ liệu cũ trong lúc chờ.
+    setActiveItems([]);
     try {
       const q = new URLSearchParams();
       if (maDt) q.append("ma_dt", maDt);
@@ -47,15 +56,30 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
       const res = await fetch(url);
       const data = await res.json();
       if (data.success && data.data?.items) {
-        setSlips(data.data.items);
-        if (data.data.items.length > 0) {
-          setActiveStt(data.data.items[0].stt);
-        }
+        const items: PickupSlip[] = data.data.items;
+        setSlips(items);
+        // Không còn phiếu -> bỏ chọn dòng đang xem (tránh chi tiết cũ còn sót).
+        setActiveStt(items.length > 0 ? items[0].stt : null);
+        // Bỏ các phiếu đã chọn không còn trong danh sách mới.
+        setSelectedStts((prev) => {
+          const valid = new Set(items.map((s) => s.stt));
+          const next = new Set<string>();
+          prev.forEach((s) => {
+            if (valid.has(s)) next.add(s);
+          });
+          return next;
+        });
+      } else {
+        setSlips([]);
+        setActiveStt(null);
+        setSelectedStts(new Set());
       }
     } catch (e) {
       console.error("Error fetching pickup slips", e);
     } finally {
       setLoading(false);
+      // Luôn tăng để effect chi tiết chạy lại (kể cả activeStt giữ nguyên).
+      setDetailVersion((v) => v + 1);
     }
   }, [maDt, ngayCt]);
 
@@ -65,12 +89,13 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     }
   }, [isOpen, loadSlips]);
 
-  // Fetch items when active slip changes
+  // Fetch items when active slip changes (hoặc khi danh sách phiếu vừa nạp lại).
   useEffect(() => {
-    if (!activeStt) {
+    if (!isOpen || !activeStt) {
       setActiveItems([]);
       return;
     }
+    let cancelled = false;
     const fetchDetail = async () => {
       setLoadingDetail(true);
       try {
@@ -78,17 +103,20 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
           `/api/pickup/detail/${encodeURIComponent(activeStt)}`,
         );
         const data = await res.json();
-        if (data.success && data.data?.items) {
+        if (!cancelled && data.success && data.data?.items) {
           setActiveItems(data.data.items);
         }
       } catch (e) {
         console.error("Error fetching pickup detail", e);
       } finally {
-        setLoadingDetail(false);
+        if (!cancelled) setLoadingDetail(false);
       }
     };
     fetchDetail();
-  }, [activeStt]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStt, detailVersion, isOpen]);
 
   const toggleSelect = useCallback((stt: string) => {
     setSelectedStts((prev) => {
@@ -136,16 +164,30 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
     }
   }, [selectedStts, slips, maDt, ngayCt, onAccept, onClose]);
 
-
   // ===== Hotkey chuẩn VFP ctbhch (plan §7.2.3) =====
+  // Chỉ xử lý khi dialog đang mở VÀ focus không nằm trong ô nhập liệu
+  // (tránh Space/Enter/Ctrl+A ảnh hưởng tới VoucherList hoặc ô text khác).
   useEffect(() => {
     if (!isOpen) return;
+    const isTypingTarget = (el: Element | null): boolean => {
+      if (!el) return false;
+      if (el instanceof HTMLInputElement) {
+        const t = (el.getAttribute("type") || "text").toLowerCase();
+        return t !== "checkbox" && t !== "radio" && t !== "button";
+      }
+      return (
+        el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+      );
+    };
     const onKey = (e: KeyboardEvent) => {
+      const typing = isTypingTarget(document.activeElement);
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && e.key.toLowerCase() === "a") {
+        if (typing) return;
         e.preventDefault();
         selectAll();
       } else if (ctrl && e.key.toLowerCase() === "u") {
+        if (typing) return;
         e.preventDefault();
         deselectAll();
       } else if (ctrl && e.key === "Home") {
@@ -155,13 +197,16 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
         e.preventDefault();
         if (slips.length > 0) setActiveStt(slips[slips.length - 1].stt);
       } else if (e.key === " ") {
+        if (typing) return;
         e.preventDefault();
         if (activeStt) toggleSelect(activeStt);
       } else if (e.key === "Enter") {
+        if (typing) return;
         e.preventDefault();
         if (selectedStts.size > 0) handleAccept();
       } else if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
@@ -185,7 +230,10 @@ export const PickupDialog: React.FC<PickupDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-neutral-900/60 backdrop-blur-[2px]">
-      <div className="flex flex-col w-full max-w-6xl bg-white rounded-xl shadow-2xl border border-neutral-300 overflow-hidden h-full max-h-[92vh]">
+      <div
+        ref={containerRef}
+        className="flex flex-col w-full max-w-6xl bg-white rounded-xl shadow-2xl border border-neutral-300 overflow-hidden h-full max-h-[92vh]"
+      >
         {/* ===== Modal Header (navy gradient) ===== */}
         <header className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-primary-900 via-primary-800 to-neutral-900 text-white border-b border-primary-900 shrink-0">
           <div className="flex items-center space-x-2.5">

@@ -1,0 +1,384 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "../../lib/utils";
+
+export interface VfpOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+export type VfpNavDir = "up" | "down" | "next" | "prev" | "left" | "right";
+
+interface VfpLookupCellProps {
+  value: string;
+  /** Gọi mỗi khi người dùng gõ/sửa/xóa/dán (đồng bộ state cha + xóa tên/giá cũ). */
+  onValueChange: (v: string) => void;
+  /** Gọi khi chọn một gợi ý từ dropdown (điền tên, lấy giá...). */
+  onPick: (opt: VfpOption) => void;
+  /** Gọi khi rời ô / Enter để kiểm tra mã (như Valid của VFP). */
+  onCommit: (rawValue: string) => void;
+  /** Nguồn gợi ý (RAM). */
+  fetcher: (q: string) => Promise<VfpOption[]>;
+  /** Điều hướng ô: 'up' | 'down' | 'next' | 'prev' (kèm phần tử input hiện tại). */
+  onNavigate?: (dir: VfpNavDir, el: HTMLInputElement) => void;
+  onFocusRow?: () => void;
+  inputRef?: React.Ref<HTMLInputElement>;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  debounceMs?: number;
+  maxResults?: number;
+  dropdownMinWidth?: number;
+  /** Tự động nhảy sang ô kế sau khi chọn gợi ý (mặc định true, giống VFP). */
+  advanceOnPick?: boolean;
+}
+
+/**
+ * Ô nhập mã có dropdown gợi ý, mô phỏng đúng hành vi grid VFP (xem input.md):
+ * - Dropdown CHỈ mở từ sự kiện gõ/sửa/xóa/dán — KHÔNG mở khi click/focus/Tab/mũi tên.
+ * - Vào ô: hiện text + con trỏ (không bôi đen, không mở dropdown).
+ * - ↑/↓: dropdown đóng -> nhảy dòng trên/dưới (cùng cột); dropdown mở -> di chuyển dòng sáng.
+ * - Enter: dropdown đóng -> sang ô kế; dropdown mở -> chọn dòng sáng rồi sang ô kế.
+ * - Esc: dropdown mở -> đóng, giữ nguyên chữ; dropdown đóng -> không làm gì.
+ * - Rời ô: kiểm tra mã (onCommit) trừ khi vừa chọn từ dropdown (đánh dấu "ok").
+ * - Sửa chữ: gọi onValueChange để cha xóa tên/giá cũ của mã trước đó.
+ */
+export const VfpLookupCell: React.FC<VfpLookupCellProps> = ({
+  value,
+  onValueChange,
+  onPick,
+  onCommit,
+  fetcher,
+  onNavigate,
+  onFocusRow,
+  inputRef: externalInputRef,
+  placeholder,
+  disabled,
+  className,
+  debounceMs = 30,
+  maxResults = 30,
+  dropdownMinWidth = 320,
+  advanceOnPick = true,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<VfpOption[]>([]);
+  const [highlight, setHighlight] = useState(0);
+  const [rect, setRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const ddRef = useRef<HTMLUListElement | null>(null);
+  const internalRef = useRef<HTMLInputElement | null>(null);
+  const timerRef = useRef<number | null>(null);
+  // "seq" hủy ngầm: mọi lần vào ô / chọn xong / xóa hết chữ đều tăng seq
+  // nên kết quả tìm kiếm trả về trễ sẽ bị bỏ, dropdown không bật lên sau khi đã rời đi.
+  const reqSeqRef = useRef(0);
+  // "data-ok": giá trị đã chọn từ dropdown -> rời ô không kiểm tra lại.
+  const okRef = useRef<string>("");
+  // Cờ hủy: khi Esc -> không kiểm tra/không enrich khi rời ô (giống Excel).
+  const cancelRef = useRef(false);
+
+  const setRefs = (el: HTMLInputElement | null) => {
+    internalRef.current = el;
+    if (typeof externalInputRef === "function") {
+      externalInputRef(el);
+    } else if (externalInputRef && typeof externalInputRef === "object") {
+      (
+        externalInputRef as React.MutableRefObject<HTMLInputElement | null>
+      ).current = el;
+    }
+  };
+
+  const position = useCallback(() => {
+    const el = internalRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setRect({
+      top: r.bottom + 2,
+      left: r.left,
+      width: Math.max(r.width, dropdownMinWidth),
+    });
+  }, [dropdownMinWidth]);
+
+  const close = useCallback(() => {
+    reqSeqRef.current++;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setOpen(false);
+    setOptions([]);
+  }, []);
+
+  // Dọn timer khi unmount
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  // Đóng dropdown khi cuộn / đổi kích thước (trừ khi cuộn bên trong chính dropdown)
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (
+        t instanceof Node &&
+        (wrapRef.current?.contains(t) || ddRef.current?.contains(t))
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
+
+  // Đóng khi click ra ngoài
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || ddRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Cuộn dòng đang sáng vào tầm nhìn
+  useEffect(() => {
+    if (!open) return;
+    const el = ddRef.current?.children[highlight] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [highlight, open]);
+
+  const scheduleSearch = (raw: string) => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    const q = raw.trim();
+    if (!q) {
+      close();
+      return;
+    }
+    const id = ++reqSeqRef.current;
+    timerRef.current = window.setTimeout(async () => {
+      try {
+        const opts = await fetcher(q);
+        if (id !== reqSeqRef.current) return;
+        const list = opts.slice(0, maxResults);
+        setOptions(list);
+        setHighlight(0);
+        if (list.length > 0) {
+          position();
+          setOpen(true);
+        } else {
+          setOpen(false);
+        }
+      } catch {
+        if (id === reqSeqRef.current) {
+          setOptions([]);
+          setOpen(false);
+        }
+      }
+    }, debounceMs);
+  };
+
+  const pick = (i: number) => {
+    const opt = options[i];
+    if (!opt) return;
+    okRef.current = opt.value;
+    // Đồng bộ DOM ngay để blur (nếu có) không thấy giá trị cũ.
+    if (internalRef.current) internalRef.current.value = opt.value;
+    onPick(opt);
+    close();
+    if (advanceOnPick) {
+      const el = internalRef.current;
+      window.setTimeout(() => {
+        if (el) onNavigate?.("next", el);
+      }, 0);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    okRef.current = ""; // chữ đã bị sửa -> chưa còn hợp lệ
+    onValueChange(v);
+    scheduleSearch(v);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const isOpen = open && options.length > 0;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (isOpen) setHighlight((h) => (h + 1) % options.length);
+      else onNavigate?.("down", e.currentTarget);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (isOpen)
+        setHighlight((h) => (h - 1 + options.length) % options.length);
+      else onNavigate?.("up", e.currentTarget);
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (isOpen && highlight >= 0 && highlight < options.length) {
+        pick(highlight);
+      } else {
+        close();
+        onNavigate?.("next", e.currentTarget);
+      }
+      return;
+    }
+    if (e.key === "F2") {
+      // F2: vào chế độ SỬA -> con trỏ ở cuối chữ (giống Excel).
+      e.preventDefault();
+      const el = e.currentTarget;
+      const n = el.value.length;
+      el.setSelectionRange(n, n);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (open) {
+        // Đang mở dropdown -> chỉ đóng dropdown, giữ nguyên chữ.
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      } else {
+        // Không có dropdown -> thoát ô (bỏ chọn), giống Excel.
+        e.preventDefault();
+        e.stopPropagation();
+        cancelRef.current = true;
+        e.currentTarget.blur();
+      }
+      return;
+    }
+    // Mũi tên Trái/Phải: di chuyển NGANG trong cùng một dòng.
+    // Chỉ nhảy ô khi con trỏ đã ở đầu/cuối chữ; nếu đang ở giữa chữ thì để
+    // trình duyệt di chuyển con trỏ bình thường (không preventDefault).
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (open) {
+        // Dropdown đang mở -> đóng rồi mới di chuyển ngang.
+        close();
+      }
+      const el = e.currentTarget;
+      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      const atEnd =
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length;
+      if (
+        (e.key === "ArrowLeft" && atStart) ||
+        (e.key === "ArrowRight" && atEnd)
+      ) {
+        e.preventDefault();
+        onNavigate?.(e.key === "ArrowLeft" ? "left" : "right", el);
+      }
+      return;
+    }
+    if (e.key === "Tab") {
+      // Tab / Shift+Tab: nhảy ô trong dòng; ở đầu/cuối dòng thì sang dòng kề.
+      e.preventDefault();
+      close();
+      onNavigate?.(e.shiftKey ? "prev" : "next", e.currentTarget);
+      return;
+    }
+  };
+
+  const handleBlur = () => {
+    reqSeqRef.current++; // hủy kết quả tìm kiếm đang chờ
+    window.setTimeout(() => setOpen(false), 120);
+    // Esc -> hủy: không kiểm tra/không enrich khi rời ô.
+    if (cancelRef.current) {
+      cancelRef.current = false;
+      return;
+    }
+    const v = (internalRef.current?.value ?? value).trim();
+    if (!v) return;
+    if (okRef.current && okRef.current.trim().toUpperCase() === v.toUpperCase())
+      return;
+    onCommit(v);
+  };
+
+  return (
+    <div className="relative w-full" ref={wrapRef}>
+      <input
+        ref={setRefs}
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        data-vfp-lookup="true"
+        value={value}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={handleChange}
+        onFocus={(e) => {
+          onFocusRow?.();
+          // Kiểu Excel: khi ô được CHỌN (focus) -> bôi đen toàn bộ nội dung.
+          // Nhờ vậy gõ phím sẽ THAY THẾ nội dung cũ, Delete/Backspace xóa trắng ô.
+          // (Double-click / F2 sẽ đặt con trỏ để sửa từng ký tự — xem onDoubleClick/onKeyDown.)
+          const el = e.currentTarget;
+          window.setTimeout(() => {
+            if (document.activeElement === el) el.select();
+          }, 0);
+        }}
+        onDoubleClick={(e) => {
+          // Double-click: vào chế độ SỬA -> con trỏ ở cuối chữ (không bôi đen).
+          const el = e.currentTarget;
+          window.setTimeout(() => {
+            if (document.activeElement === el) {
+              const n = el.value.length;
+              el.setSelectionRange(n, n);
+            }
+          }, 0);
+        }}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className={cn("w-full", className)}
+      />
+      {open && options.length > 0 && rect && (
+        <ul
+          ref={ddRef}
+          style={{
+            position: "fixed",
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+          }}
+          className="z-[9999] max-h-56 overflow-y-auto bg-white border border-neutral-300 rounded shadow-xl text-xs divide-y divide-neutral-100"
+        >
+          {options.map((opt, i) => (
+            <li
+              key={`${opt.value}-${i}`}
+              onMouseEnter={() => setHighlight(i)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pick(i)}
+              className={cn(
+                "px-2.5 py-1.5 cursor-pointer flex items-center justify-between gap-3",
+                i === highlight
+                  ? "bg-primary-50 text-primary-900 font-medium"
+                  : "hover:bg-neutral-50",
+              )}
+            >
+              <span className="font-mono font-bold text-primary-800 shrink-0">
+                {opt.label}
+              </span>
+              {opt.hint && (
+                <span className="text-neutral-600 font-sans truncate text-right flex-1">
+                  {opt.hint}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};

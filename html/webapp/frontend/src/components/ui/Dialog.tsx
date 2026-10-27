@@ -1,7 +1,8 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "./Button";
+import { useModalLock } from "../../lib/modalLock";
 
 export interface DialogProps {
   isOpen: boolean;
@@ -20,6 +21,9 @@ export const Dialog: React.FC<DialogProps> = ({
   width = "max-w-4xl",
   footer,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  useModalLock(isOpen, containerRef);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen) {
@@ -35,6 +39,7 @@ export const Dialog: React.FC<DialogProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/40 backdrop-blur-sm">
       <div
+        ref={containerRef}
         className={cn(
           "w-full bg-white rounded-lg shadow-xl border border-neutral-400 flex flex-col max-h-[90vh] overflow-hidden",
           width,

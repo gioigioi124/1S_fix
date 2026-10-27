@@ -40,6 +40,8 @@ interface AutocompleteProps {
   debounceMs?: number;
   /** Số kết quả tối đa hiển thị. Mặc định 20. */
   maxResults?: number;
+  /** Chiều rộng tối thiểu của dropdown (px). Mặc định 320. */
+  dropdownMinWidth?: number;
 }
 
 /**
@@ -68,6 +70,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
   openOnTypeOnly = false,
   debounceMs = 250,
   maxResults = 20,
+  dropdownMinWidth = 320,
 }) => {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<AutocompleteOption[]>([]);
@@ -99,7 +102,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
     setDropdownRect({
       top: rect.bottom + 2,
       left: rect.left,
-      width: Math.max(rect.width, 320),
+      width: Math.max(rect.width, dropdownMinWidth),
     });
   };
 

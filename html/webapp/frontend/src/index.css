@@ -106,6 +106,26 @@ kbd {
   white-space: nowrap;
 }
 
+/* Ô đang CHỌN trong grid (kiểu Excel): viền đậm 2px nổi bật */
+.grid-cell-input:focus {
+  outline: none;
+  border-color: #0284c7 !important;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.55);
+  position: relative;
+  z-index: 1;
+}
+
+/* Ẩn mũi tên tăng/giảm của ô số (dùng cho Đơn giá / Thành tiền / Chiết khấu) */
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spinner {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* ===== Print styles cho mẫu in phiếu (PrintPreview) ===== */
 @media print {
   /* Ẩn toàn bộ UI điều khiển, chỉ giữ phần mẫu in */

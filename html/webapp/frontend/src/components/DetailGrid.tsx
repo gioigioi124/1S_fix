@@ -1,13 +1,19 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { VoucherDetail } from "../types/voucher";
-import { formatCurrency, formatQuantity } from "../lib/format";
+import {
+  formatCurrency,
+  formatQuantity,
+  formatNumber2,
+  parseNumberInput,
+} from "../lib/format";
 import {
   searchProducts,
   getProductByCode,
   initProductIndex,
 } from "../lib/productIndex";
 import { initCatalogCache, searchKho } from "../lib/catalogCache";
-import { Autocomplete, AutocompleteOption } from "./ui/Autocomplete";
+import { AutocompleteOption } from "./ui/Autocomplete";
+import { VfpLookupCell, VfpNavDir } from "./ui/VfpLookupCell";
 import { Trash2 } from "lucide-react";
 
 /** Kết quả tra giá trả về cho DetailGrid (đơn giá ngoại tệ + % chiết khấu). */
@@ -16,6 +22,95 @@ export interface PriceLookupResult {
   chiet_khau: number;
   expired?: boolean;
 }
+
+interface NumCellProps {
+  value: number;
+  disabled?: boolean;
+  className?: string;
+  title?: string;
+  onCommit: (v: number) => void;
+  onFocus?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+}
+
+/**
+ * Ô nhập số có định dạng 2 chữ số thập phân (xxx xxx xxx.00).
+ * - Khi focus: hiện số thô để sửa, bôi đen toàn bộ.
+ * - Khi rời ô / Enter: parse và commit giá trị số.
+ * - Không có mũi tên tăng/giảm (dùng type=text + inputMode=decimal).
+ */
+const NumCell: React.FC<NumCellProps> = ({
+  value,
+  disabled,
+  className,
+  title,
+  onCommit,
+  onFocus,
+  onKeyDown,
+}) => {
+  const [text, setText] = useState<string | null>(null);
+  // Cờ hủy: khi Esc -> không commit giá trị đang sửa (khôi phục giá trị cũ).
+  const cancelRef = useRef(false);
+  const display = text !== null ? text : formatNumber2(value);
+  const commit = () => {
+    if (cancelRef.current) {
+      cancelRef.current = false;
+      setText(null);
+      return;
+    }
+    if (text !== null) {
+      onCommit(parseNumberInput(text));
+      setText(null);
+    }
+  };
+  // Vào chế độ SỬA: con trỏ ở cuối chữ (không bôi đen) — dùng cho double-click / F2.
+  const enterEdit = (el: HTMLInputElement) => {
+    setText(formatNumber2(value));
+    window.setTimeout(() => {
+      if (document.activeElement === el) {
+        const n = el.value.length;
+        el.setSelectionRange(n, n);
+      }
+    }, 0);
+  };
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={display}
+      disabled={disabled}
+      readOnly={disabled}
+      title={title}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={(e) => {
+        // Kiểu Excel: chọn ô -> bôi đen toàn bộ (gõ đè thay thế, Delete xóa trắng).
+        setText(formatNumber2(value));
+        e.currentTarget.select();
+        onFocus?.(e);
+      }}
+      onDoubleClick={(e) => enterEdit(e.currentTarget)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          commit();
+        } else if (e.key === "F2") {
+          e.preventDefault();
+          enterEdit(e.currentTarget);
+          return;
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          cancelRef.current = true;
+          setText(null);
+          e.currentTarget.blur();
+          return;
+        }
+        onKeyDown?.(e);
+      }}
+      className={className}
+    />
+  );
+};
 
 interface DetailGridProps {
   items: VoucherDetail[];
@@ -184,11 +279,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
   // Ghi một dòng vào itemsRef NGAY LẬP TỨC (đồng bộ) rồi mới báo lên cha.
   // Nhờ vậy các bước async tiếp theo (tra giá) luôn đọc được bản mới nhất,
   // không bị ghi đè bằng snapshot cũ (mất Tên VT / TK Có vừa enrich).
-  const applyRow = (
-    idx: number,
-    row: VoucherDetail,
-    fieldName?: string,
-  ) => {
+  const applyRow = (idx: number, row: VoucherDetail, fieldName?: string) => {
     const next = [...itemsRef.current];
     next[idx] = row;
     itemsRef.current = next;
@@ -222,7 +313,16 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     // 2. Tra danh mục vật tư NGAY TRONG RAM (Web Worker) — tức thì, không chờ mạng.
     //    Chờ lần nạp index đầu tiên (đã khởi động từ app) rồi tra RAM.
     await initProductIndex();
-    const found = await getProductByCode(cleanCode);
+    let found = await getProductByCode(cleanCode);
+    // Không khớp chính xác -> chọn NGAY giá trị ĐẦU TIÊN trong dropdown (gợi ý).
+    // Nếu vẫn không có gì -> fallback null (để trống danh mục).
+    if (!found) {
+      const suggestions = await searchProducts(cleanCode);
+      const first = suggestions[0];
+      if (first) {
+        found = await getProductByCode(first.value);
+      }
+    }
 
     // LẤY LẠI dòng HIỆN TẠI (người dùng có thể đã sửa Đơn giá / Số tấm / Hệ số /
     // SL / Chiết khấu / Mã kho trong lúc chờ). Chỉ hợp nhất trường danh mục.
@@ -234,6 +334,8 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     if (found) {
       const nextLoaiVt = (found.loai_vt || latest.loai_vt || "1").trim();
       const isMut = nextLoaiVt === "2" || nextLoaiVt === "4";
+      // Loại 4: Hệ số bị khóa, luôn = 1.
+      const isLoai4 = nextLoaiVt === "4";
       const currentSl =
         latest.so_luong9 && latest.so_luong9 > 0 ? latest.so_luong9 : 1;
       applyRow(
@@ -256,7 +358,13 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
               ? latest.so_tam!
               : 1
             : currentSl,
-          he_so8: isMut ? ((latest.he_so8 ?? 0) > 0 ? latest.he_so8! : 1) : 1,
+          he_so8: isLoai4
+            ? 1
+            : isMut
+              ? (latest.he_so8 ?? 0) > 0
+                ? latest.he_so8!
+                : 1
+              : 1,
           gia_tb_tt: "C",
         },
         "MA_VT_ENRICHED",
@@ -269,16 +377,18 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     if (!onLookupPrice) return;
     const priceRow = itemsRef.current[idx];
     if (!priceRow) return;
-    if ((priceRow.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
+    // Dùng mã thực tế trên dòng (có thể đã đổi sang mã gợi ý đầu tiên).
+    const priceCode = (priceRow.ma_vt || "").trim().toUpperCase();
+    if (!priceCode) return;
     if (Number(priceRow.gia_nt9 ?? 0) > 0) return;
 
-    const price = await onLookupPrice(cleanCode);
+    const price = await onLookupPrice(priceCode);
     if (!price) return;
 
     // Đọc lại dòng mới nhất; bỏ qua nếu người dùng đã đổi mã hoặc đã tự nhập đơn giá.
     const afterPrice = itemsRef.current[idx];
     if (!afterPrice) return;
-    if ((afterPrice.ma_vt || "").trim().toUpperCase() !== cleanCode) return;
+    if ((afterPrice.ma_vt || "").trim().toUpperCase() !== priceCode) return;
     if (Number(afterPrice.gia_nt9 ?? 0) > 0) return;
 
     applyRow(
@@ -293,7 +403,150 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
     );
   };
 
-  // Handle cell navigation (Enter / Shift+Tab / Ctrl+Shift+Tab / F8)
+  // ===== Điều hướng ô trong grid (mô phỏng VFP) =====
+  // Danh sách ô nhập được (có class grid-cell-input, không disabled) theo thứ tự DOM.
+  const getGridInputs = (el: HTMLElement): HTMLInputElement[] => {
+    const table = el.closest("table");
+    if (!table) return [];
+    return Array.from(
+      table.querySelectorAll<HTMLInputElement>(
+        "input.grid-cell-input:not([disabled])",
+      ),
+    );
+  };
+
+  // Danh sách ô nhập được (có class grid-cell-input, không disabled) TRONG CÙNG MỘT DÒNG.
+  const getRowInputs = (el: HTMLElement): HTMLInputElement[] => {
+    const tr = el.closest("tr");
+    if (!tr) return [];
+    return Array.from(
+      tr.querySelectorAll<HTMLInputElement>(
+        "input.grid-cell-input:not([disabled])",
+      ),
+    );
+  };
+
+  // Điều hướng NGANG trong cùng một dòng (← / → / Tab / Shift+Tab).
+  // - 'left'/'right': chỉ nhảy ô khi con trỏ đã ở đầu/cuối chữ (giống Excel/VFP),
+  //   nếu đang ở giữa chữ thì để trình duyệt di chuyển con trỏ bình thường.
+  // - 'next'/'prev': luôn nhảy ô (dùng cho Tab / Enter).
+  // - wrap: true -> ở đầu/cuối dòng thì nhảy sang dòng kề (dùng cho Tab).
+  const navigateCellInRow = (
+    dir: "left" | "right" | "next" | "prev",
+    el: HTMLInputElement,
+    opts: { wrap?: boolean } = {},
+  ) => {
+    const inputs = getRowInputs(el);
+    const idx = inputs.indexOf(el);
+    if (idx < 0) return;
+
+    if (dir === "left" || dir === "right") {
+      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      const atEnd =
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length;
+      if (dir === "left" && !atStart) return; // còn chữ bên trái -> di chuyển con trỏ
+      if (dir === "right" && !atEnd) return; // còn chữ bên phải -> di chuyển con trỏ
+    }
+
+    const forward = dir === "right" || dir === "next";
+    const targetIdx = forward ? idx + 1 : idx - 1;
+
+    if (targetIdx >= 0 && targetIdx < inputs.length) {
+      inputs[targetIdx].focus();
+      inputs[targetIdx].select();
+      return;
+    }
+
+    // Đã ở đầu/cuối dòng: nếu cho phép wrap thì nhảy sang dòng kề (giữ cột).
+    if (opts.wrap) {
+      const tr = el.closest("tr");
+      const tbody = tr?.parentElement;
+      if (!tr || !tbody) return;
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const rowIdx = rows.indexOf(tr);
+      const targetRow = rows[rowIdx + (forward ? 1 : -1)];
+      if (!targetRow) return;
+      const td = el.closest("td");
+      const cellIdx = td ? Array.from(tr.children).indexOf(td) : -1;
+      if (cellIdx < 0) return;
+      const targetCell = targetRow.children[cellIdx] as HTMLElement | undefined;
+      const targetInput = targetCell?.querySelector<HTMLInputElement>(
+        "input.grid-cell-input:not([disabled])",
+      );
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.select();
+      }
+    }
+  };
+
+  // Điều hướng ô: 'next'/'prev' theo thứ tự DOM; 'up'/'down' giữ nguyên cột, đổi dòng.
+  const navigateCell = (dir: VfpNavDir, el: HTMLInputElement) => {
+    if (dir === "up" || dir === "down") {
+      const tr = el.closest("tr");
+      const tbody = tr?.parentElement;
+      if (!tr || !tbody) return;
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const rowIdx = rows.indexOf(tr);
+      const targetRow = rows[rowIdx + (dir === "down" ? 1 : -1)];
+      if (!targetRow) return;
+      // Giữ nguyên chỉ số cột (td) của ô hiện tại.
+      const td = el.closest("td");
+      const cellIdx = td ? Array.from(tr.children).indexOf(td) : -1;
+      if (cellIdx < 0) return;
+      const targetCell = targetRow.children[cellIdx] as HTMLElement | undefined;
+      const targetInput = targetCell?.querySelector<HTMLInputElement>(
+        "input.grid-cell-input:not([disabled])",
+      );
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.select();
+      }
+      return;
+    }
+    const inputs = getGridInputs(el);
+    const idx = inputs.indexOf(el);
+    if (idx < 0) return;
+    const nextIdx = dir === "next" ? idx + 1 : idx - 1;
+    if (nextIdx >= 0 && nextIdx < inputs.length) {
+      inputs[nextIdx].focus();
+      inputs[nextIdx].select();
+    }
+  };
+
+  // Callback cho các ô lookup (Mã VT / Kho): điều hướng + tạo dòng mới khi ở ô cuối dòng.
+  const handleCellNavigate = (
+    dir: VfpNavDir,
+    el: HTMLInputElement,
+    rowIdx: number,
+  ) => {
+    // ← / → : di chuyển ngang, giới hạn trong cùng một dòng.
+    if (dir === "left" || dir === "right") {
+      navigateCellInRow(dir, el);
+      return;
+    }
+    // Shift+Tab: lùi ô, ở đầu dòng thì sang dòng kề.
+    if (dir === "prev") {
+      navigateCellInRow("prev", el, { wrap: true });
+      return;
+    }
+    // ↑ / ↓ : đổi dòng, giữ nguyên cột.
+    if (dir === "up" || dir === "down") {
+      navigateCell(dir, el);
+      return;
+    }
+    // Enter (next): sang ô kế trong dòng; ở ô cuối dòng thì kiểm tra và tạo dòng mới.
+    const inputs = getRowInputs(el);
+    const idx = inputs.indexOf(el);
+    if (idx === inputs.length - 1) {
+      tryAddNewRow(rowIdx, el.closest("tr"));
+      return;
+    }
+    navigateCellInRow("next", el);
+  };
+
+  // Handle cell navigation cho các ô thường (Enter / Shift+Tab / F8 / ArrowUp / ArrowDown)
   const handleCellKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
     rowIdx: number,
@@ -303,6 +556,49 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
       e.preventDefault();
       e.stopPropagation();
       onDeleteItem?.(rowIdx);
+      return;
+    }
+
+    // F2: vào chế độ SỬA -> con trỏ ở cuối chữ (giống Excel).
+    if (e.key === "F2") {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const n = el.value.length;
+      el.setSelectionRange(n, n);
+      return;
+    }
+
+    // Esc: thoát ô (bỏ chọn), giống Excel.
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.blur();
+      return;
+    }
+
+    // Mũi tên Lên/Xuống: di chuyển giữa các DÒNG (giữ nguyên cột).
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateCell(e.key === "ArrowDown" ? "down" : "up", e.currentTarget);
+      return;
+    }
+
+    // Mũi tên Trái/Phải: di chuyển NGANG trong cùng một dòng.
+    // Chỉ nhảy ô khi con trỏ đã ở đầu/cuối chữ; nếu đang ở giữa chữ thì để
+    // trình duyệt di chuyển con trỏ bình thường (không preventDefault).
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      const el = e.currentTarget;
+      const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+      const atEnd =
+        el.selectionStart === el.value.length &&
+        el.selectionEnd === el.value.length;
+      if (
+        (e.key === "ArrowLeft" && atStart) ||
+        (e.key === "ArrowRight" && atEnd)
+      ) {
+        e.preventDefault();
+        navigateCellInRow(e.key === "ArrowLeft" ? "left" : "right", el);
+      }
       return;
     }
 
@@ -317,13 +613,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
         return;
       }
 
-      const table = current.closest("table");
-      if (!table) return;
-      const inputs = Array.from(
-        table.querySelectorAll<HTMLInputElement>(
-          "input.grid-cell-input:not([disabled])",
-        ),
-      );
+      const inputs = getRowInputs(current);
       const currIdx = inputs.indexOf(current);
       if (currIdx >= 0 && currIdx < inputs.length - 1) {
         inputs[currIdx + 1].focus();
@@ -332,24 +622,12 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
         const tr = current.closest("tr");
         tryAddNewRow(rowIdx, tr);
       }
-    } else if (
-      (e.key === "Tab" && e.shiftKey) ||
-      (e.ctrlKey && e.shiftKey && e.key === "Tab")
-    ) {
-      const current = e.currentTarget;
-      const table = current.closest("table");
-      if (!table) return;
-      const inputs = Array.from(
-        table.querySelectorAll<HTMLInputElement>(
-          "input.grid-cell-input:not([disabled])",
-        ),
-      );
-      const currIdx = inputs.indexOf(current);
-      if (currIdx > 0) {
-        e.preventDefault();
-        inputs[currIdx - 1].focus();
-        inputs[currIdx - 1].select();
-      }
+    } else if (e.key === "Tab") {
+      // Tab / Shift+Tab: nhảy ô trong dòng; ở đầu/cuối dòng thì sang dòng kề.
+      e.preventDefault();
+      navigateCellInRow(e.shiftKey ? "prev" : "next", e.currentTarget, {
+        wrap: true,
+      });
     }
   };
 
@@ -394,10 +672,10 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                 <th className={`w-24 text-right ${amber}`} scope="col">
                   SL bán
                 </th>
-                <th className="w-28 text-right" scope="col">
+                <th className="w-40 text-right" scope="col">
                   Đơn giá
                 </th>
-                <th className="w-32 text-right" scope="col">
+                <th className="w-44 text-right" scope="col">
                   Thành tiền
                 </th>
                 <th className="w-14 text-center" scope="col">
@@ -456,7 +734,7 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                         </td>
                         {/* Mã vật tư */}
                         <td className="p-0.5">
-                          <Autocomplete
+                          <VfpLookupCell
                             inputRef={(el) => {
                               maVtInputRefs.current[idx] = el;
                               if (idx === 0 && firstMaVtRef) {
@@ -465,31 +743,35 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                                 ).current = el;
                               }
                             }}
-                            selectOnFocus
                             value={it.ma_vt || ""}
-                            onChange={(val) =>
+                            onValueChange={(val) =>
+                              // Sửa chữ -> xóa ngay Tên/Đơn giá/CK của mã cũ (như VFP)
+                              // để không còn tình trạng mã mới nhưng tên/giá cũ.
                               onChangeItem?.(
                                 idx,
-                                { ...it, ma_vt: val },
+                                {
+                                  ...it,
+                                  ma_vt: val,
+                                  ten_vt: "",
+                                  gia_nt9: 0,
+                                  chiet_khau: 0,
+                                },
                                 "MA_VT",
                               )
                             }
-                            onSelect={(opt) =>
+                            onPick={(opt) =>
                               enrichVatTuRow(idx, opt.value, opt.hint)
                             }
-                            onBlur={() => {
-                              if (it.ma_vt && it.ma_vt.trim()) {
-                                enrichVatTuRow(idx, it.ma_vt);
-                              }
-                            }}
-                            onFocus={() => onSelectRow?.(idx)}
-                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            onCommit={(v) => enrichVatTuRow(idx, v)}
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            onFocusRow={() => onSelectRow?.(idx)}
                             fetcher={fetchVatTuOptions}
                             placeholder="Mã VT..."
-                            hideIcon
-                            openOnTypeOnly
                             debounceMs={30}
                             maxResults={30}
+                            dropdownMinWidth={420}
                             className="h-6 px-1.5 py-0.5 text-xs font-mono font-bold text-primary-800 uppercase bg-white border border-neutral-300 rounded focus:border-primary-500 grid-cell-input"
                           />
                         </td>
@@ -519,9 +801,8 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                         {/* Số lượng (Disabled theo yêu cầu) */}
                         <td className="p-0.5">
                           <input
-                            type="number"
-                            step="any"
-                            value={it.so_luong9 ?? 0}
+                            type="text"
+                            value={formatNumber2(it.so_luong9 ?? 0)}
                             disabled
                             readOnly
                             tabIndex={-1}
@@ -539,19 +820,18 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                             className="w-full px-1 py-0.5 text-xs text-center font-semibold text-primary-700 bg-neutral-100 border border-neutral-200 rounded cursor-not-allowed"
                           />
                         </td>
-                        {/* Kho (Autocomplete DmKho) */}
+                        {/* Kho (VfpLookupCell DmKho) */}
                         <td className="p-0.5">
-                          <Autocomplete
-                            selectOnFocus
+                          <VfpLookupCell
                             value={it.ma_kho || ""}
-                            onChange={(val) =>
+                            onValueChange={(val) =>
                               onChangeItem?.(
                                 idx,
                                 { ...it, ma_kho: val.toUpperCase() },
                                 "MA_KHO",
                               )
                             }
-                            onSelect={(opt) =>
+                            onPick={(opt) =>
                               onChangeItem?.(
                                 idx,
                                 {
@@ -561,68 +841,70 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                                 "MA_KHO",
                               )
                             }
-                            onFocus={() => onSelectRow?.(idx)}
-                            onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
+                            onCommit={(v) =>
+                              onChangeItem?.(
+                                idx,
+                                { ...it, ma_kho: v.trim().toUpperCase() },
+                                "MA_KHO",
+                              )
+                            }
+                            onNavigate={(dir, el) =>
+                              handleCellNavigate(dir, el, idx)
+                            }
+                            onFocusRow={() => onSelectRow?.(idx)}
                             fetcher={fetchKhoOptionsLocal}
                             placeholder="Mã kho..."
-                            hideIcon
+                            dropdownMinWidth={300}
                             className="h-6 px-1 py-0.5 text-xs text-center font-mono font-semibold text-neutral-800 bg-white border border-neutral-300 rounded uppercase focus:border-primary-500 grid-cell-input"
                           />
                         </td>
                         {/* Số tấm */}
                         <td className={`p-0.5 ${amber}`}>
-                          <input
-                            type="number"
-                            step="any"
+                          <NumCell
                             value={it.so_tam ?? 0}
-                            onChange={(e) =>
+                            onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                {
-                                  ...it,
-                                  so_tam: parseFloat(e.target.value) || 0,
-                                },
+                                { ...it, so_tam: v },
                                 "SO_TAM",
                               )
                             }
-                            onFocus={(e) => {
-                              onSelectRow?.(idx);
-                              e.currentTarget.select();
-                            }}
+                            onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
                             className="w-full px-1.5 py-0.5 text-xs text-right font-semibold text-amber-950 bg-amber-50/80 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input"
                           />
                         </td>
-                        {/* Hệ số */}
+                        {/* Hệ số (Loại 4: khóa, luôn = 1) */}
                         <td className={`p-0.5 ${amber}`}>
-                          <input
-                            type="number"
-                            step="any"
+                          <NumCell
                             value={it.he_so8 ?? 1}
-                            onChange={(e) =>
+                            disabled={it.loai_vt === "4"}
+                            title={
+                              it.loai_vt === "4"
+                                ? "Loại vật tư 4: Hệ số cố định = 1"
+                                : undefined
+                            }
+                            onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                {
-                                  ...it,
-                                  he_so8: parseFloat(e.target.value) || 0,
-                                },
+                                { ...it, he_so8: v },
                                 "HE_SO8",
                               )
                             }
-                            onFocus={(e) => {
-                              onSelectRow?.(idx);
-                              e.currentTarget.select();
-                            }}
+                            onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
-                            className="w-full px-1 py-0.5 text-xs text-right font-medium text-amber-950 bg-amber-50/80 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input"
+                            className={`w-full px-1 py-0.5 text-xs text-right font-medium text-amber-950 border border-amber-300 rounded focus:border-amber-600 focus:outline-none grid-cell-input ${
+                              it.loai_vt === "4"
+                                ? "bg-amber-100/60 cursor-not-allowed"
+                                : "bg-amber-50/80"
+                            }`}
                           />
                         </td>
                         {/* SL bán (Disabled / ReadOnly) */}
                         <td className={`p-0.5 ${amber}`}>
                           <input
-                            type="number"
-                            step="any"
-                            value={it.so_luong8 ?? 0}
+                            type="text"
+                            value={formatNumber2(it.so_luong8 ?? 0)}
                             disabled
                             readOnly
                             tabIndex={-1}
@@ -631,72 +913,48 @@ export const DetailGrid: React.FC<DetailGridProps> = ({
                         </td>
                         {/* Đơn giá */}
                         <td className="p-0.5">
-                          <input
-                            type="number"
-                            step="any"
+                          <NumCell
                             value={it.gia_nt9 ?? 0}
-                            onChange={(e) =>
+                            onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                {
-                                  ...it,
-                                  gia_nt9: parseFloat(e.target.value) || 0,
-                                },
+                                { ...it, gia_nt9: v },
                                 "GIA_NT9",
                               )
                             }
-                            onFocus={(e) => {
-                              onSelectRow?.(idx);
-                              e.currentTarget.select();
-                            }}
+                            onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
                             className="w-full px-1.5 py-0.5 text-xs text-right font-medium text-neutral-800 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
                           />
                         </td>
                         {/* Thành tiền */}
                         <td className="p-0.5">
-                          <input
-                            type="number"
-                            step="any"
+                          <NumCell
                             value={it.tien_nt9 ?? 0}
-                            onChange={(e) =>
+                            onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                {
-                                  ...it,
-                                  tien_nt9: parseFloat(e.target.value) || 0,
-                                },
+                                { ...it, tien_nt9: v },
                                 "TIEN_NT9",
                               )
                             }
-                            onFocus={(e) => {
-                              onSelectRow?.(idx);
-                              e.currentTarget.select();
-                            }}
+                            onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
                             className="w-full px-1.5 py-0.5 text-xs text-right font-bold text-neutral-900 bg-neutral-50 border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
                           />
                         </td>
                         {/* CK % */}
                         <td className="p-0.5">
-                          <input
-                            type="number"
-                            step="any"
+                          <NumCell
                             value={it.chiet_khau ?? 0}
-                            onChange={(e) =>
+                            onCommit={(v) =>
                               onChangeItem?.(
                                 idx,
-                                {
-                                  ...it,
-                                  chiet_khau: parseFloat(e.target.value) || 0,
-                                },
+                                { ...it, chiet_khau: v },
                                 "CHIET_KHAU",
                               )
                             }
-                            onFocus={(e) => {
-                              onSelectRow?.(idx);
-                              e.currentTarget.select();
-                            }}
+                            onFocus={() => onSelectRow?.(idx)}
                             onKeyDown={(e) => handleCellKeyDown(e, idx, false)}
                             className="w-full px-1 py-0.5 text-xs text-center font-medium text-neutral-700 bg-white border border-neutral-300 rounded focus:border-primary-500 focus:outline-none grid-cell-input"
                           />

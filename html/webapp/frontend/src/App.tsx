@@ -10,7 +10,11 @@ import { DebtPanel } from "./components/DebtPanel";
 import { PrintPreview } from "./components/PrintPreview";
 import { Badge } from "./components/ui/Badge";
 import { formatDate } from "./lib/format";
-import { VoucherFullDetail, VoucherDetail, VoucherHeader } from "./types/voucher";
+import {
+  VoucherFullDetail,
+  VoucherDetail,
+  VoucherHeader,
+} from "./types/voucher";
 import { User, ShieldCheck, Search, RefreshCw, Trash2, X } from "lucide-react";
 
 export function App() {
@@ -53,8 +57,12 @@ export function App() {
   const [deleting, setDeleting] = useState<boolean>(false);
 
   // Inherited data for new voucher (F2 / Ctrl+F2 / Pickup)
-  const [inheritedData, setInheritedData] = useState<Partial<VoucherFullDetail> | null>(null);
-  const [pickupPayload, setPickupPayload] = useState<{ items: VoucherDetail[]; ma_xe?: string } | null>(null);
+  const [inheritedData, setInheritedData] =
+    useState<Partial<VoucherFullDetail> | null>(null);
+  const [pickupPayload, setPickupPayload] = useState<{
+    items: VoucherDetail[];
+    ma_xe?: string;
+  } | null>(null);
 
   const showToast = (msg: string) => {
     setNotification(msg);
@@ -96,14 +104,22 @@ export function App() {
 
   // Selected voucher header
   const currentSelectedVoucher =
-    vouchers.find((v) => v.stt === selectedStt) || (vouchers.length > 0 ? vouchers[0] : null);
+    vouchers.find((v) => v.stt === selectedStt) ||
+    (vouchers.length > 0 ? vouchers[0] : null);
 
-  const [pickupParams, setPickupParams] = useState<{ maDt?: string; ngayCt?: string }>({});
+  const [pickupParams, setPickupParams] = useState<{
+    maDt?: string;
+    ngayCt?: string;
+  }>({});
 
   const handleOpenPickup = (maDt?: string, ngayCt?: string) => {
     setPickupParams({
       maDt: maDt || activeVoucher?.ma_dt || currentSelectedVoucher?.ma_dt || "",
-      ngayCt: ngayCt || activeVoucher?.ngay_ct || currentSelectedVoucher?.ngay_ct || undefined,
+      ngayCt:
+        ngayCt ||
+        activeVoucher?.ngay_ct ||
+        currentSelectedVoucher?.ngay_ct ||
+        undefined,
     });
     setIsPickupOpen(true);
   };
@@ -135,19 +151,31 @@ export function App() {
         ...activeVoucher,
         stt: undefined,
         so_ct: undefined,
-        items: activeVoucher.items.map((it) => ({ ...it, stt: undefined, stt0: undefined })),
+        items: activeVoucher.items.map((it) => ({
+          ...it,
+          stt: undefined,
+          stt0: undefined,
+        })),
       });
       navToNew();
-      showToast(`Đã sao chép nội dung chứng từ số ${activeVoucher.so_ct || activeVoucher.stt}.`);
+      showToast(
+        `Đã sao chép nội dung chứng từ số ${activeVoucher.so_ct || activeVoucher.stt}.`,
+      );
     } else if (currentSelectedVoucher) {
       setInheritedData({
         ...currentSelectedVoucher,
         stt: undefined,
         so_ct: undefined,
-        items: listDetail.map((it) => ({ ...it, stt: undefined, stt0: undefined })),
+        items: listDetail.map((it) => ({
+          ...it,
+          stt: undefined,
+          stt0: undefined,
+        })),
       });
       navToNew();
-      showToast(`Đã sao chép nội dung chứng từ số ${currentSelectedVoucher.so_ct || currentSelectedVoucher.stt}.`);
+      showToast(
+        `Đã sao chép nội dung chứng từ số ${currentSelectedVoucher.so_ct || currentSelectedVoucher.stt}.`,
+      );
     } else {
       showToast("Chưa chọn chứng từ để sao chép.");
     }
@@ -175,15 +203,22 @@ export function App() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/vouchers/${encodeURIComponent(deleteTarget.stt)}?user_name=KTCN3`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/vouchers/${encodeURIComponent(deleteTarget.stt)}?user_name=KTCN3`,
+        {
+          method: "DELETE",
+        },
+      );
       const data = await res.json();
       if (!res.ok || !data.success) {
-        showToast(`Lỗi khi xóa: ${data?.detail?.message || data?.message || "Không thể xóa chứng từ."}`);
+        showToast(
+          `Lỗi khi xóa: ${data?.detail?.message || data?.message || "Không thể xóa chứng từ."}`,
+        );
         return;
       }
-      showToast(`Đã xóa thành công chứng từ số ${deleteTarget.so_ct || deleteTarget.stt}.`);
+      showToast(
+        `Đã xóa thành công chứng từ số ${deleteTarget.so_ct || deleteTarget.stt}.`,
+      );
       setDeleteTarget(null);
       refresh();
       if (sttParam) {
@@ -197,84 +232,97 @@ export function App() {
   };
 
   // VFP Keyboard Shortcuts Handler (khớp ctbhh / ctbhd / ctbhch)
-  useHotkeys({
-    // F2 = Thêm mới (ctbhh Command1)
-    onF2: () => {
-      if (!sttParam) handleActionNew();
+  useHotkeys(
+    {
+      // F2 = Thêm mới (ctbhh Command1)
+      onF2: () => {
+        if (!sttParam) handleActionNew();
+      },
+      // Ctrl+F2 = Sao chép tạo mới
+      onCtrlF2: () => {
+        if (!sttParam) handleActionCopy();
+      },
+      // F3 = Sửa (ctbhh Command2)
+      onF3: () => {
+        if (!sttParam) handleActionEdit();
+      },
+      onCtrlF3: () => showToast("Ctrl+F3 - Sửa mẫu in."),
+      onF6: () => showToast("F6 - Nhập số IMEI."),
+      // F7 = In chứng từ (ctbhh Command5)
+      onF7: () => {
+        if (activeVoucher) handleOpenPrint(activeVoucher.stt);
+        else if (selectedStt) handleOpenPrint(selectedStt);
+        else showToast("Chưa chọn chứng từ để in.");
+      },
+      // Shift+F7 / Ctrl+F7 = Xem trước (ctbhh Command4)
+      onPreview: () => {
+        if (activeVoucher) handleOpenPrint(activeVoucher.stt);
+        else if (selectedStt) handleOpenPrint(selectedStt);
+        else showToast("Chưa chọn chứng từ để xem trước.");
+      },
+      // F8 = Xóa (ctbhh Command3)
+      onF8: () => {
+        if (!sttParam) handleActionDelete();
+      },
+      // F9 = Lọc chứng từ (ctbhh Command6)
+      onF9: () => setIsFilterOpen(true),
+      // F4 = Chọn tài khoản
+      onF4: () => {
+        if (activeVoucher || isNew)
+          showToast("F4 - Đang chọn tài khoản ngầm định.");
+      },
+      // Space = đánh dấu / bỏ đánh dấu dòng (ctbhh KeyPress 32)
+      onSpace: () => toggleMark(selectedStt),
+      // Ctrl+A = chọn tất cả dòng (Mark = .T.)
+      onCtrlA: () => {
+        setMarked(new Set(vouchers.map((v) => v.stt)));
+        showToast(`Đã chọn tất cả ${vouchers.length} chứng từ.`);
+      },
+      // Ctrl+U = bỏ chọn tất cả dòng (Mark = .F.)
+      onCtrlU: () => {
+        setMarked(new Set());
+        showToast("Đã bỏ chọn tất cả chứng từ.");
+      },
+      onCtrlF: () => showToast("Ctrl+F - Đánh số chứng từ tự động."),
+      // Enter = mở chi tiết dòng đang chọn (tương đương double-click)
+      onEnter: () => {
+        if (!sttParam && selectedStt) {
+          navToDetail(selectedStt);
+        }
+      },
+      onEscape: () => {
+        if (deleteTarget) {
+          setDeleteTarget(null);
+        } else if (isPrintOpen) {
+          setIsPrintOpen(false);
+        } else if (isDebtOpen) {
+          setIsDebtOpen(false);
+        } else if (isPickupOpen) {
+          setIsPickupOpen(false);
+        } else if (isFilterOpen) {
+          setIsFilterOpen(false);
+        } else if (sttParam) {
+          navToList();
+        }
+      },
+      onCtrlHome: () => {
+        if (vouchers.length > 0) setSelectedStt(vouchers[0].stt);
+      },
+      onCtrlEnd: () => {
+        if (vouchers.length > 0)
+          setSelectedStt(vouchers[vouchers.length - 1].stt);
+      },
+      // Tắt hotkey danh sách khi có dialog đang mở (tránh Space/Ctrl+A/Enter
+      // ảnh hưởng tới VoucherList trong lúc thao tác trên PickupDialog/Filter...).
     },
-    // Ctrl+F2 = Sao chép tạo mới
-    onCtrlF2: () => {
-      if (!sttParam) handleActionCopy();
-    },
-    // F3 = Sửa (ctbhh Command2)
-    onF3: () => {
-      if (!sttParam) handleActionEdit();
-    },
-    onCtrlF3: () => showToast("Ctrl+F3 - Sửa mẫu in."),
-    onF6: () => showToast("F6 - Nhập số IMEI."),
-    // F7 = In chứng từ (ctbhh Command5)
-    onF7: () => {
-      if (activeVoucher) handleOpenPrint(activeVoucher.stt);
-      else if (selectedStt) handleOpenPrint(selectedStt);
-      else showToast("Chưa chọn chứng từ để in.");
-    },
-    // Shift+F7 / Ctrl+F7 = Xem trước (ctbhh Command4)
-    onPreview: () => {
-      if (activeVoucher) handleOpenPrint(activeVoucher.stt);
-      else if (selectedStt) handleOpenPrint(selectedStt);
-      else showToast("Chưa chọn chứng từ để xem trước.");
-    },
-    // F8 = Xóa (ctbhh Command3)
-    onF8: () => {
-      if (!sttParam) handleActionDelete();
-    },
-    // F9 = Lọc chứng từ (ctbhh Command6)
-    onF9: () => setIsFilterOpen(true),
-    // F4 = Chọn tài khoản
-    onF4: () => {
-      if (activeVoucher || isNew) showToast("F4 - Đang chọn tài khoản ngầm định.");
-    },
-    // Space = đánh dấu / bỏ đánh dấu dòng (ctbhh KeyPress 32)
-    onSpace: () => toggleMark(selectedStt),
-    // Ctrl+A = chọn tất cả dòng (Mark = .T.)
-    onCtrlA: () => {
-      setMarked(new Set(vouchers.map((v) => v.stt)));
-      showToast(`Đã chọn tất cả ${vouchers.length} chứng từ.`);
-    },
-    // Ctrl+U = bỏ chọn tất cả dòng (Mark = .F.)
-    onCtrlU: () => {
-      setMarked(new Set());
-      showToast("Đã bỏ chọn tất cả chứng từ.");
-    },
-    onCtrlF: () => showToast("Ctrl+F - Đánh số chứng từ tự động."),
-    // Enter = mở chi tiết dòng đang chọn (tương đương double-click)
-    onEnter: () => {
-      if (!sttParam && selectedStt) {
-        navToDetail(selectedStt);
-      }
-    },
-    onEscape: () => {
-      if (deleteTarget) {
-        setDeleteTarget(null);
-      } else if (isPrintOpen) {
-        setIsPrintOpen(false);
-      } else if (isDebtOpen) {
-        setIsDebtOpen(false);
-      } else if (isPickupOpen) {
-        setIsPickupOpen(false);
-      } else if (isFilterOpen) {
-        setIsFilterOpen(false);
-      } else if (sttParam) {
-        navToList();
-      }
-    },
-    onCtrlHome: () => {
-      if (vouchers.length > 0) setSelectedStt(vouchers[0].stt);
-    },
-    onCtrlEnd: () => {
-      if (vouchers.length > 0) setSelectedStt(vouchers[vouchers.length - 1].stt);
-    },
-  });
+    !(
+      isPickupOpen ||
+      isFilterOpen ||
+      isDebtOpen ||
+      isPrintOpen ||
+      !!deleteTarget
+    ),
+  );
 
   const handleHotkeyBarAction = (actionId: string) => {
     switch (actionId) {
@@ -359,10 +407,13 @@ export function App() {
                 <div>
                   Khách hàng: <b>{deleteTarget.ten_dt || deleteTarget.ma_dt}</b>
                 </div>
-                <div>Ngày lập: <b>{formatDate(deleteTarget.ngay_ct)}</b></div>
+                <div>
+                  Ngày lập: <b>{formatDate(deleteTarget.ngay_ct)}</b>
+                </div>
               </div>
               <p className="text-danger-700 font-medium text-[11px]">
-                Lưu ý: Thao tác sẽ gọi thủ tục CtBH_Delete để hoàn nhập kho và xóa bút toán sổ cái trên CSDL VP_2014.
+                Lưu ý: Thao tác sẽ gọi thủ tục CtBH_Delete để hoàn nhập kho và
+                xóa bút toán sổ cái trên CSDL VP_2014.
               </p>
             </div>
             <div className="bg-neutral-100 px-4 py-2 flex justify-end gap-2 border-t border-neutral-200">
@@ -522,7 +573,10 @@ export function App() {
                   value="1"
                 />
                 <span>
-                  <span className="font-mono font-bold text-primary-300">1</span> - In giá bán
+                  <span className="font-mono font-bold text-primary-300">
+                    1
+                  </span>{" "}
+                  - In giá bán
                 </span>
               </label>
               <label className="inline-flex items-center gap-1 cursor-pointer text-neutral-300 hover:text-white">
@@ -533,7 +587,8 @@ export function App() {
                   value="0"
                 />
                 <span>
-                  <span className="font-mono text-neutral-400">0</span> - Không in giá
+                  <span className="font-mono text-neutral-400">0</span> - Không
+                  in giá
                 </span>
               </label>
             </div>
@@ -614,8 +669,18 @@ export function App() {
       <PickupDialog
         isOpen={isPickupOpen}
         onClose={() => setIsPickupOpen(false)}
-        maDt={pickupParams.maDt || activeVoucher?.ma_dt || currentSelectedVoucher?.ma_dt || ""}
-        ngayCt={pickupParams.ngayCt || activeVoucher?.ngay_ct || currentSelectedVoucher?.ngay_ct || undefined}
+        maDt={
+          pickupParams.maDt ||
+          activeVoucher?.ma_dt ||
+          currentSelectedVoucher?.ma_dt ||
+          ""
+        }
+        ngayCt={
+          pickupParams.ngayCt ||
+          activeVoucher?.ngay_ct ||
+          currentSelectedVoucher?.ngay_ct ||
+          undefined
+        }
         onAccept={(_slips, items, maXe) => {
           setPickupPayload({ items, ma_xe: maXe });
           if (!sttParam) {
