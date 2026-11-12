@@ -34,17 +34,128 @@ def get_connection():
             raise e
     return conn
 
-def search_bg(from_date_str, to_date_str):
+TREE_COLUMNS = ("Stt", "So_Ct", "Ngay_Ct", "Ma_Dt", "Ma_Vm", "UserName")
+TREE_COLUMN_LABELS = {
+    "Stt": "Stt",
+    "So_Ct": "Số CT",
+    "Ngay_Ct": "Ngày lập",
+    "Ma_Dt": "Mã KH",
+    "Ma_Vm": "Mã Vùng",
+    "UserName": "Người tạo",
+}
+TREE_COL_INDEX = {col: idx for idx, col in enumerate(TREE_COLUMNS)}
+
+
+def parse_date_ordinal(date_str):
+    """Parse DD/MM/YYYY into date ordinal for chronological sorting."""
+    if not date_str:
+        return 0
+    try:
+        return datetime.datetime.strptime(str(date_str).strip(), "%d/%m/%Y").date().toordinal()
+    except ValueError:
+        return 0
+
+
+def default_bg_sort_key(values):
+    """Default sort key: Số CT ASC -> Mã Vùng ASC -> Ngày lập DESC -> Mã KH ASC -> Stt."""
+    stt = str(values[0] or "")
+    so_ct = str(values[1] or "").strip().lower()
+    ngay_ord = parse_date_ordinal(values[2])
+    ma_dt = str(values[3] or "").strip().lower()
+    ma_vm = str(values[4] or "").strip().lower()
+    return (so_ct, ma_vm, -ngay_ord, ma_dt, stt)
+
+
+def column_bg_sort_key(col, values):
+    """Extract sort key for a single Treeview column."""
+    if col == "Ngay_Ct":
+        return parse_date_ordinal(values[2])
+    idx = TREE_COL_INDEX[col]
+    return str(values[idx] or "").strip().lower()
+
+
+def escape_sql_like(value):
+    """Escape SQL Server LIKE wildcard characters."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+        .replace("[", "\\[")
+    )
+
+
+def filter_bg_rows(rows, so_ct="", ma_vm="", ma_dt=""):
+    """Filter BG rows by case-insensitive substring match on Số CT, Mã Vùng, and Mã KH."""
+    q_so_ct = str(so_ct or "").strip().lower()
+    q_ma_vm = str(ma_vm or "").strip().lower()
+    q_ma_dt = str(ma_dt or "").strip().lower()
+    if not (q_so_ct or q_ma_vm or q_ma_dt):
+        return list(rows)
+    filtered = []
+    for r in rows:
+        if q_so_ct and q_so_ct not in str(r[1] or "").lower():
+            continue
+        if q_ma_dt and q_ma_dt not in str(r[3] or "").lower():
+            continue
+        if q_ma_vm and q_ma_vm not in str(r[4] or "").lower():
+            continue
+        filtered.append(r)
+    return filtered
+
+
+def search_bg(from_date_str="", to_date_str="", so_ct="", ma_vm="", ma_dt=""):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        sql = "SELECT Stt, So_Ct, Ngay_Ct, Ma_Dt, Ma_Vm, UserName FROM dbo.BG WHERE Ngay_Ct >= ? AND Ngay_Ct <= ? ORDER BY Ngay_Ct DESC"
-        cursor.execute(sql, (from_date_str, to_date_str))
+        where_clauses = []
+        params = []
+
+        if from_date_str:
+            where_clauses.append("Ngay_Ct >= ?")
+            params.append(from_date_str)
+        if to_date_str:
+            where_clauses.append("Ngay_Ct <= ?")
+            params.append(to_date_str)
+
+        for col_name, raw_val in (("So_Ct", so_ct), ("Ma_Vm", ma_vm), ("Ma_Dt", ma_dt)):
+            val = str(raw_val or "").strip().upper()
+            if val:
+                where_clauses.append(
+                    f"UPPER(LTRIM(RTRIM(ISNULL({col_name}, '')))) LIKE ? ESCAPE '\\'"
+                )
+                params.append(f"%{escape_sql_like(val)}%")
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        sql = f"""
+            SELECT Stt,
+                   LTRIM(RTRIM(ISNULL(So_Ct, ''))) AS So_Ct,
+                   Ngay_Ct,
+                   LTRIM(RTRIM(ISNULL(Ma_Dt, ''))) AS Ma_Dt,
+                   LTRIM(RTRIM(ISNULL(Ma_Vm, ''))) AS Ma_Vm,
+                   LTRIM(RTRIM(ISNULL(UserName, ''))) AS UserName
+            FROM dbo.BG
+            {where_sql}
+            ORDER BY LTRIM(RTRIM(ISNULL(So_Ct, ''))) ASC,
+                     LTRIM(RTRIM(ISNULL(Ma_Vm, ''))) ASC,
+                     Ngay_Ct DESC,
+                     LTRIM(RTRIM(ISNULL(Ma_Dt, ''))) ASC,
+                     Stt ASC
+        """
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         result = []
         for r in rows:
             ngay = r.Ngay_Ct.strftime('%d/%m/%Y') if r.Ngay_Ct else ""
-            result.append((r.Stt, r.So_Ct, ngay, r.Ma_Dt or '', r.Ma_Vm or '', r.UserName or ''))
+            result.append((
+                r.Stt,
+                (r.So_Ct or '').strip(),
+                ngay,
+                (r.Ma_Dt or '').strip(),
+                (r.Ma_Vm or '').strip(),
+                (r.UserName or '').strip(),
+            ))
+        result.sort(key=default_bg_sort_key)
         return result
     finally:
         conn.close()
@@ -355,7 +466,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Tool Import Bảng Giá Excel - VP2014")
-        self.geometry("720x520")
+        self.geometry("720x555")
         self.resizable(False, False)
         
         self.eval('tk::PlaceWindow . center')
@@ -394,7 +505,7 @@ class App(tk.Tk):
 
     def setup_tab_update(self):
         frame_search = tk.Frame(self.tab_update)
-        frame_search.pack(fill="x", padx=10, pady=10)
+        frame_search.pack(fill="x", padx=10, pady=(10, 4))
         
         today = datetime.date.today()
         first_day = today.replace(day=1)
@@ -415,24 +526,56 @@ class App(tk.Tk):
         
         btn_search = tk.Button(frame_search, text="Tìm Kiếm", command=self.on_search)
         btn_search.pack(side="left", padx=10)
+
+        frame_filter = tk.Frame(self.tab_update)
+        frame_filter.pack(fill="x", padx=10, pady=(0, 6))
+
+        filter_specs = (
+            ("Mã CT:", "entry_so_ct", 16),
+            ("Mã vùng:", "entry_ma_vm", 14),
+            ("Mã KH:", "entry_ma_dt", 14),
+        )
+        for idx, (label_text, attr_name, width) in enumerate(filter_specs):
+            tk.Label(frame_filter, text=label_text).pack(side="left", padx=(0 if idx == 0 else 8, 4))
+            entry = tk.Entry(frame_filter, width=width)
+            entry.pack(side="left")
+            entry.bind("<KeyRelease>", self.on_filter_change)
+            entry.bind("<Return>", lambda _e: self.on_search())
+            setattr(self, attr_name, entry)
+
+        btn_clear_filter = tk.Button(frame_filter, text="Xóa lọc", command=self.on_clear_filters)
+        btn_clear_filter.pack(side="left", padx=10)
+
+        self.all_rows = None
+        self.loaded_date_range = None
+        self._last_filter_tuple = ("", "", "")
         
-        columns = ("Stt", "So_Ct", "Ngay_Ct", "Ma_Dt", "Ma_Vm", "UserName")
-        self.tree = ttk.Treeview(self.tab_update, columns=columns, show="headings", selectmode="extended", height=10)
-        self.tree.heading("Stt", text="Stt")
-        self.tree.heading("So_Ct", text="Số CT")
-        self.tree.heading("Ngay_Ct", text="Ngày lập")
-        self.tree.heading("Ma_Dt", text="Mã KH")
-        self.tree.heading("Ma_Vm", text="Mã Vùng")
-        self.tree.heading("UserName", text="Người tạo")
-        
+        frame_tree = tk.Frame(self.tab_update)
+        frame_tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.sort_column = "So_Ct"
+        self.sort_reverse = False
+
+        self.tree = ttk.Treeview(frame_tree, columns=TREE_COLUMNS, show="headings", selectmode="extended", height=10)
+        for col, label in TREE_COLUMN_LABELS.items():
+            if col == "Stt":
+                self.tree.heading(col, text=label)
+            else:
+                self.tree.heading(col, text=label, command=lambda c=col: self.on_sort_column(c))
+
         self.tree.column("Stt", width=0, stretch=tk.NO)
         self.tree.column("So_Ct", width=120)
         self.tree.column("Ngay_Ct", width=100)
         self.tree.column("Ma_Dt", width=100)
         self.tree.column("Ma_Vm", width=100)
         self.tree.column("UserName", width=100)
-        
-        self.tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        scrollbar = ttk.Scrollbar(frame_tree, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        self.update_sort_headings()
         
         lbl_hint = tk.Label(self.tab_update, text="* Gợi ý: Giữ phím Ctrl hoặc Shift click chuột để chọn nhiều bảng giá cùng lúc.\n* Cập Nhật: Thêm mới / cập nhật giá | Xóa Hàng Hóa: Xóa các mã hàng trong Excel khỏi các bảng giá đã chọn.", fg="#555", justify="left")
         lbl_hint.pack(fill="x", padx=10, pady=(0, 5))
@@ -641,6 +784,93 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Lỗi", f"Có lỗi xảy ra:\n{str(e)}")
 
+    def update_sort_headings(self):
+        for col, base_label in TREE_COLUMN_LABELS.items():
+            if col == "Stt":
+                continue
+            if col == self.sort_column:
+                arrow = "▼" if self.sort_reverse else "▲"
+                text = f"{base_label} {arrow}"
+            else:
+                text = base_label
+            self.tree.heading(col, text=text)
+
+    def on_sort_column(self, col):
+        if self.sort_column == col:
+            reverse = not self.sort_reverse
+        else:
+            reverse = False
+        self.sort_treeview(col, reverse)
+
+    def sort_treeview(self, col, reverse=False):
+        items = [(iid, self.tree.item(iid, "values")) for iid in self.tree.get_children("")]
+        # Sort by default (Số CT -> Mã Vùng -> Ngày mới nhất) first so ties remain consistent
+        items.sort(key=lambda item: default_bg_sort_key(item[1]))
+        items.sort(key=lambda item: column_bg_sort_key(col, item[1]), reverse=reverse)
+        for idx, (iid, _) in enumerate(items):
+            self.tree.move(iid, "", idx)
+        self.sort_column = col
+        self.sort_reverse = reverse
+        self.update_sort_headings()
+
+    def _parse_optional_date(self, date_str):
+        if not date_str:
+            return ""
+        return datetime.datetime.strptime(date_str, "%d/%m/%Y").strftime("%Y-%m-%d")
+
+    def _get_filter_values(self):
+        return (
+            self.entry_so_ct.get().strip(),
+            self.entry_ma_vm.get().strip(),
+            self.entry_ma_dt.get().strip(),
+        )
+
+    def apply_filters(self, preserve_sort=True):
+        if self.all_rows is None:
+            return []
+        so_ct, ma_vm, ma_dt = self._get_filter_values()
+        self._last_filter_tuple = (so_ct, ma_vm, ma_dt)
+        filtered = filter_bg_rows(self.all_rows, so_ct=so_ct, ma_vm=ma_vm, ma_dt=ma_dt)
+
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for r in filtered:
+            self.tree.insert("", "end", values=r)
+
+        if preserve_sort:
+            self.sort_treeview(self.sort_column, self.sort_reverse)
+        else:
+            self.sort_column = "So_Ct"
+            self.sort_reverse = False
+            self.update_sort_headings()
+        return filtered
+
+    def on_filter_change(self, _event=None):
+        current_filters = self._get_filter_values()
+        if current_filters == self._last_filter_tuple:
+            return
+        if self.all_rows is None:
+            return
+        current_range = (
+            self.normalize_date(self.entry_from.get()),
+            self.normalize_date(self.entry_to.get()),
+        )
+        if current_range != self.loaded_date_range:
+            return
+        self.apply_filters(preserve_sort=True)
+
+    def on_clear_filters(self):
+        for entry in (self.entry_so_ct, self.entry_ma_vm, self.entry_ma_dt):
+            entry.delete(0, tk.END)
+        current_range = (
+            self.normalize_date(self.entry_from.get()),
+            self.normalize_date(self.entry_to.get()),
+        )
+        if self.all_rows is not None and current_range == self.loaded_date_range:
+            self.apply_filters(preserve_sort=True)
+        else:
+            self.on_search()
+
     def on_search(self):
         from_d = self.normalize_date(self.entry_from.get())
         to_d = self.normalize_date(self.entry_to.get())
@@ -652,8 +882,8 @@ class App(tk.Tk):
         self.entry_to.insert(0, to_d)
         
         try:
-            from_date_sql = datetime.datetime.strptime(from_d, "%d/%m/%Y").strftime("%Y-%m-%d")
-            to_date_sql = datetime.datetime.strptime(to_d, "%d/%m/%Y").strftime("%Y-%m-%d")
+            from_date_sql = self._parse_optional_date(from_d)
+            to_date_sql = self._parse_optional_date(to_d)
         except ValueError:
             messagebox.showwarning("Cảnh báo", "Ngày không hợp lệ. Vui lòng nhập định dạng DD/MM/YYYY (ví dụ: 1/4 hoặc 01/04/2026)")
             return
@@ -662,12 +892,14 @@ class App(tk.Tk):
             self.tree.delete(item)
             
         try:
-            results = search_bg(from_date_sql, to_date_sql)
-            for r in results:
-                self.tree.insert("", "end", values=r)
-            if not results:
-                messagebox.showinfo("Thông báo", "Không tìm thấy bảng giá nào trong khoảng thời gian này.")
+            self.all_rows = search_bg(from_date_sql, to_date_sql)
+            self.loaded_date_range = (from_d, to_d)
+            displayed = self.apply_filters(preserve_sort=False)
+            if not displayed:
+                messagebox.showinfo("Thông báo", "Không tìm thấy bảng giá nào phù hợp.")
         except Exception as e:
+            self.all_rows = None
+            self.loaded_date_range = None
             messagebox.showerror("Lỗi", f"Lỗi tìm kiếm:\n{str(e)}")
 
     def on_update(self):
