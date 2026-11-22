@@ -1762,3 +1762,52 @@ Thay vì sao chép 100 dòng mã tính toán lặp lại vào cả 7 Record trê
    - `ctbhd.err`: Không xuất hiện (0 syntax errors).
    - `ctbhd.SCT`: Đúng chuẩn 180,368 bytes.
    - Backups: Tồn tại nguyên vẹn, sẵn sàng rollback nếu cần.
+
+## 25. Khắc Phục Lỗi Gắp Trùng Phiếu Xuất Kho Khi Đổi Đối Tượng (A → B) Trên Form `ctbhch`
+
+### Hiện Tượng
+Trên hệ thống 1S2024, form `FRM\ctbhch.scx` là cầu nối lấy phiếu xuất kho từ database `KH_2014` (`CtBH`/`CtBH0`) lên hóa đơn bán hàng kế toán ở `VP_2014` (gọi từ nút **Chọn phiếu xuất** trên `ctbhd.scx`):
+1. Kế toán mở `ctbhd.scx` cho khách hàng **A**, bấm **Chọn phiếu xuất**, gắp phiếu kho `PX_1` của khách **A** (các dòng chi tiết `K_CtTemp` nhận `Stt_PX = PX_1.Stt`).
+2. Kế toán quay lại ô **Mã đối tượng** (`txtMa_Dt`) / **Tên đối tượng** (`txtTen_Dt`) đổi từ khách **A** sang khách **B** rồi bấm **Lưu**. Dữ liệu ghi vào `VP_2014` có `CtBH.Ma_Dt = 'B'` và `CtBH0.Stt_PX = PX_1.Stt`.
+3. Khi kế toán lập hóa đơn mới cho khách **A** và bấm **Chọn phiếu xuất**, phiếu kho `PX_1` (đã được lập hóa đơn cho **B**) vẫn xuất hiện lại trong `ctbhch` và có thể bị gắp trùng lần thứ 2.
+
+### Nguyên Nhân
+- Nút `cmdChonPhieuXuat.Click` gọi `=ListReadyToPickup(THISFORM, K_PhTemp1.Ma_Dt, K_PhTemp1.Ngay_Ct, K_PhTemp1.Ngay_Ct)` (trong `FXP\ctbh.FXP`), gọi Stored Procedure `VP_2014.dbo.IN_ListReadyToPickup(@p_Nh_Ct, @p_Ma_Dt, @p_Ngay1, @p_Ngay2)` nạp danh sách phiếu chờ vào cursor `K_DsPx` rồi mở `ctbhch.scx`.
+- Bước loại trừ các phiếu kho đã gắp của `IN_ListReadyToPickup` ràng buộc thêm theo `Ma_Dt = @p_Ma_Dt` ở phía `VP_2014.dbo.CtBH`. Do hóa đơn đã lưu dưới `Ma_Dt = 'B'`, lần truy vấn sau với `@p_Ma_Dt = 'A'` bỏ sót bản ghi `Stt_PX` tương ứng nên vẫn trả lại `PX_1`.
+- Bản `ctbhch.SCX` gốc trong `1S2024\FRM\` đã bị lược bỏ trường `METHODS` (chỉ còn bytecode `OBJCODE` ở 4 record: `REC 3`, `REC 4`, `REC 5`, `REC 9`).
+
+### Cách Đã Sửa (Chỉ Tầng Form VFP — Không Sửa SQL Server)
+Đã sao chép bản gốc `ctbhch.SCX` / `ctbhch.SCT` vào `FRM\` của repo `1S_fix` và patch `METHODS` cho 4 record (thuần ASCII, chuẩn CRLF, không có dòng trống trước `PROCEDURE` đầu tiên theo Mục 12):
+
+1. **Khôi phục nguyên bản 4 method gốc từ `OBJCODE` (`REC 3`, `REC 4`, `REC 5`, `REC 9`)** kèm bảo vệ `USED('K_DsPx') AND NOT EOF('K_DsPx')` / `FOR NOT DELETED()` khi lưới trống (`0 / 0`):
+   - `REC 3` (`frmCtbhch.KeyPress`): `Ctrl+Home`, `Ctrl+End`, `Space`, `Ctrl+A`, `Ctrl+U`, `DODEFAULT`.
+   - `REC 4` (`cmgNhan_huy`): `Command1.Click` (`m.Nhan_Huy = 1`, `THISFORM.Release`), `Command1.Init` (`THISFORM.DefaultButton = THIS`), `Command2.Click` (`THISFORM.Release`).
+   - `REC 5` (`Grid1`): `Init` (`DynamicBackColor`/`DynamicForeColor`), `AfterRowColChange` (`DetailViewToPickup(K_DsPx.Stt)`).
+   - `REC 9` (`Grid1.Column3.Text1`): `DblClick` (`=Create_Ctt(THISFORM)`).
+
+2. **Bổ sung `PROCEDURE Init` trong `REC 3` (`frmCtbhch`):**
+   - Sau `DODEFAULT()`, quét toàn bộ `K_DsPx` (chia batch tối đa 200 `Stt`, escape dấu nháy đơn) và truy vấn **read-only** qua `oConnDataSource.Execute(...)` (bọc `TRY...CATCH`):
+     ```sql
+     SELECT DISTINCT RTRIM(Stt_PX) AS Stt_PX
+     FROM dbo.CtBH0 WITH (NOLOCK)
+     WHERE Stt_PX IN (...)
+     ```
+     (không lọc theo `Ma_Dt` hay `Ngay_Ct` — đối chiếu toàn cục theo `Stt_PX` của bảng `VP_2014.dbo.CtBH0`).
+   - Khôi phục `GO TOP IN K_DsPx` ngay sau vòng `SCAN` đầu tiên để không để con trỏ tại `EOF()` khi không có phiếu trùng.
+   - Với mọi phiếu `K_DsPx.Stt` đã tồn tại trong `VP_2014.dbo.CtBH0.Stt_PX`: đặt `Mark = .F., Chon = ''` và `DELETE IN K_DsPx`.
+   - Tính lại bộ đếm `m.TSoPhieu0` (`COUNT FOR NOT DELETED()`) và `m.TSoPhieu` (`COUNT FOR NOT DELETED() AND Chon = 'X'`).
+   - Di chuyển `GO TOP IN K_DsPx`:
+     - Nếu còn phiếu (`NOT EOF('K_DsPx')`): nạp lại lưới dưới `=DetailViewToPickup(K_DsPx.Stt)` và đặt `THIS._Grid_Current_Row = 1`.
+     - Nếu không còn phiếu nào (`0 / 0`): vẫn mở form `ctbhch` với 2 lưới trống, xóa sạch lưới dưới bằng `=DetailViewToPickup('')` (fallback `DELETE ALL IN K_CtPx`), đặt `THIS._Grid_Current_Row = 0`.
+   - Refresh `txtTSoPhieu`, `txtTSoPhieu0`, `Grid1`, `Grid2` và khôi phục workarea cũ.
+
+### Triển Khai & Biên Dịch Trên Windows VFP8 (Bắt Buộc Theo Mục 18)
+1. Sao lưu `e:\1S2024\FRM\ctbhch.SCX` và `e:\1S2024\FRM\ctbhch.SCT`.
+2. Copy `FRM\ctbhch.SCX` và `FRM\ctbhch.SCT` từ repo `1S_fix` vào `e:\1S2024\FRM\`.
+3. Mở giao diện **Visual FoxPro 8.0** → File → Open → chọn `FRM\pack_and_compile_ctbhch.prg` → Run để thực thi `PACK` và `COMPILE FORM e:\1S2024\FRM\ctbhch.scx` (xác nhận không sinh file `ctbhch.err`).
+
+### Files Đã Thêm / Sửa
+- `FRM/ctbhch.SCX` (5,502 bytes) & `FRM/ctbhch.SCT` (23,661 bytes trước khi `PACK` trên VFP8).
+- `FRM/pack_and_compile_ctbhch.prg`: Script VFP8 nén FPT và biên dịch form.
+- `All_fix.md`: Bổ sung Mục 25.
+
